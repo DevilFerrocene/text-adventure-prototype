@@ -75,6 +75,39 @@ class SkillsTest(unittest.TestCase):
         self.assertTrue(mcp_server.start_game("aincrad")["ok"])
         mcp_server.SESSION.modifiers.clear()
 
+    def test_starting_skills_in_state(self):
+        # 出身自带技能开局就该在 state.skills（不只是 obtained_from 字段说说）
+        ids = {s.id for s in mcp_server.SESSION.state.skills}
+        self.assertIn("sword_mastery", ids)
+        self.assertIn("crisis_evasion", ids)
+        # 也出现在 state_context（前台可见）
+        ctx_ids = {s["id"] for s in mcp_server.get_state()["state_context"]["skills"]}
+        self.assertIn("sword_mastery", ctx_ids)
+
+    def test_starting_passive_works_without_relearn(self):
+        # 开局自带的精通，不用再 learn 就该生效
+        mcp_server.SESSION.modifiers.clear()
+        with patch("mcp_server.random.randint", return_value=10):
+            rc = mcp_server.roll_check(reason="挥砍攻击", sides=20)
+        self.assertEqual(rc["total"], 12)  # 10 + 2(自带精通)
+
+    def test_npc_teaches_skill_into_state(self):
+        # 营地教官教学：真进 state.skills，不只是置 flag
+        before = {s.id for s in mcp_server.SESSION.state.skills}
+        self.assertNotIn("vertical_arc", before)
+        r = mcp_server.call_affordance("skill_trainer", "learn_vertical_arc")
+        self.assertTrue(r["ok"])
+        self.assertIn("vertical_arc", r["changes"].get("skills_learned", []))
+        after = {s.id for s in mcp_server.SESSION.state.skills}
+        self.assertIn("vertical_arc", after)
+
+    def test_relearning_does_not_duplicate(self):
+        mcp_server.call_affordance("skill_trainer", "learn_vertical_arc")
+        r2 = mcp_server.call_affordance("skill_trainer", "learn_vertical_arc")
+        self.assertEqual(r2["changes"].get("skills_learned"), [])
+        count = [s.id for s in mcp_server.SESSION.state.skills].count("vertical_arc")
+        self.assertEqual(count, 1)
+
     def test_passive_mastery_boosts_attack_roll(self):
         mcp_server.learn_skill("sword_mastery")
         with patch("mcp_server.random.randint", return_value=10):
@@ -141,6 +174,9 @@ class LabyrinthAndQuestTest(unittest.TestCase):
         r = mcp_server.call_affordance("treasure_chest", "open")
         self.assertTrue(r["ok"])
         self.assertTrue(mcp_server.SESSION.state.flags.get("learned_vertical_arc"))
+        # 技能真进 state.skills，不只是 flag
+        self.assertIn("vertical_arc", r["changes"].get("skills_learned", []))
+        self.assertIn("vertical_arc", {s.id for s in mcp_server.SESSION.state.skills})
 
     def test_quest_starts_at_floor_1(self):
         q = mcp_server.get_state()["state_context"]["quest_log"][0]

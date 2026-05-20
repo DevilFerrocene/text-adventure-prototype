@@ -288,6 +288,7 @@ def register(world: GameWorld):
                 verb="learn_vertical_arc",
                 desc="请薇拉传授纵斩的发力轨迹",
                 effect={
+                    "learn_skills": ["vertical_arc"],   # 真正授予技能，进 state.skills
                     "flags": {"learned_vertical_arc": True},
                     "clues": [
                         "薇拉二话不说拔剑，在空中拉出一道银弧——"
@@ -478,6 +479,7 @@ def register(world: GameWorld):
                 verb="open",
                 desc="开启迷宫深处的技能宝箱",
                 effect={
+                    "learn_skills": ["vertical_arc"],   # 真正授予技能，进 state.skills
                     "flags": {"got_skill_book": True, "learned_vertical_arc": True},
                     "clues": [
                         "锁扣弹开的瞬间，一卷泛着淡光的手卷浮了起来——它在眼前展开，"
@@ -574,6 +576,9 @@ def register(world: GameWorld):
             stamina=10,       # SP
             max_stamina=10,
         ),
+        # 出身自带技能（start:swordsman）：单手剑精通(被动) + 危机回避(反应)。
+        # start_game 会深拷贝，玩家成长状态独立于模板。
+        skills=[SKILLS["sword_mastery"], SKILLS["crisis_evasion"]],
         conditions=[],
         relationships={
             "skill_trainer": "mentor",

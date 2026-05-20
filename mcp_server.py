@@ -625,7 +625,8 @@ def _validate_improvised(raw_items: list, state: GameState) -> Tuple[List[Improv
 
 def _apply_effect(effect: dict, state: GameState, world: GameWorld) -> dict:
     """Apply an affordance effect dict, return summary of changes."""
-    applied: dict = {"flags_set": {}, "clues_added": [], "items_removed": [], "revealed": []}
+    applied: dict = {"flags_set": {}, "clues_added": [], "items_removed": [], "revealed": [],
+                     "skills_learned": []}
     room = world.get_room(state.position)
 
     if "unlock_exit" in effect and room:
@@ -638,6 +639,16 @@ def _apply_effect(effect: dict, state: GameState, world: GameWorld) -> dict:
     applied["clues_added"].extend(effect.get("clues", []))
 
     applied["revealed"].extend(_reveal_objects(effect.get("reveals_objects", []), room, world))
+
+    # learn_skills：从世界 SKILLS 注册表把技能真正装进 state.skills（不只是置 flag）。
+    # 让 affordance（NPC 教学/技能书宝箱）能真正授予技能，与 learn_skill 工具同效。
+    for sid in effect.get("learn_skills", []):
+        if _get_skill(state, sid):
+            continue  # 已掌握，跳过
+        template = world.get_skill(sid)
+        if template:
+            state.skills.append(_clone_skill(template))
+            applied["skills_learned"].append(sid)
 
     for flag, val in applied["flags_set"].items():
         state.flags[flag] = val
@@ -710,6 +721,8 @@ def start_game(world: str = "yanan") -> dict:
             ],
             player_attrs=_clean_custom_attributes(new_world.initial_state.player_attrs),
             world_attrs=_clean_custom_attributes(new_world.initial_state.world_attrs),
+            # 初始技能（出身自带）：深拷贝，使成长状态独立于 content 模板
+            skills=[_clone_skill(s) for s in new_world.initial_state.skills],
         )
         if new_world.initial_state
         else GameState(position=list(new_world.rooms.keys())[0])
