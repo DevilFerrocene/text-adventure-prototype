@@ -1,0 +1,8 @@
+# 运行 MCP 服务器所需（核心依赖）
+mcp>=1.2.0
+python-dotenv>=1.0.0
+
+# 可选：以下为早期独立客户端/TUI 设想保留，MCP 架构下由宿主（Claude Code / Codex）
+# 提供 LLM，服务器本身不直接调用。当前代码未 import，按需取消注释。
+# openai>=1.0.0
+# textual>=1.0.0

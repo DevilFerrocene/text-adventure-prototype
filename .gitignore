@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+
+# Local environment
+.env
+
+# Local MCP server config (含机器绝对路径，clone 者从 *.example 复制)
+.mcp.json
+.codex/config.toml
+
+# Runtime artifacts
+logs/
+saves/*.json
+static/game_state.json
+
+# OS/editor noise
+.DS_Store
+.vscode/
+.idea/

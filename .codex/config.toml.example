@@ -1,0 +1,3 @@
+[mcp_servers.text-adventure]
+command = "/ABSOLUTE/PATH/TO/REPO/venv/bin/python3"
+args = ["/ABSOLUTE/PATH/TO/REPO/mcp_server.py"]
