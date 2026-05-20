@@ -13,6 +13,9 @@ venv/
 # Local environment
 .env
 
+# 内部开发设计文档（不随开源发布，仅本地保留）
+AGENTS.md
+
 # Local MCP server config (含机器绝对路径，clone 者从 *.example 复制)
 .mcp.json
 .codex/config.toml

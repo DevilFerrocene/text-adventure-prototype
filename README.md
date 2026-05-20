@@ -91,7 +91,6 @@ content/yanan.py       # 示例世界「亚楠·雨夜委托」（房间/物品/
 .claude/skills/play/   # GM skill（导演 prompt，与 .agents/ 同步）
 .agents/skills/play/
 tests/                 # 131 个回归测试
-AGENTS.md              # 完整设计文档（深度阅读）
 ```
 
 **单向依赖**：Modifier 不知道 Skill/Buff 存在；引擎不知道 content 长什么样。加新世界 = 写一份 `content/<world>.py`，引擎不动。
@@ -109,7 +108,7 @@ python -m pytest tests/ -q
 
 ## 写你自己的世界
 
-content 是纯数据。照着 `content/yanan.py` 写一份新模块（房间 `Room`、物体 `GameObject`、敌人 `EnemyTemplate`、技能 `Skill`、任务 `QuestEntry`），在 `mcp_server.py` 的 `WORLDS` 字典里注册即可。物体的 `on_destroyed`、affordance 的 `effect` 复用同一套 DSL，无需改引擎。详见 `AGENTS.md`。
+content 是纯数据。照着 `content/yanan.py` 写一份新模块（房间 `Room`、物体 `GameObject`、敌人 `EnemyTemplate`、技能 `Skill`、任务 `QuestEntry`），在 `mcp_server.py` 的 `WORLDS` 字典里注册即可。物体的 `on_destroyed`、affordance 的 `effect` 复用同一套 DSL，无需改引擎。
 
 ---
 
