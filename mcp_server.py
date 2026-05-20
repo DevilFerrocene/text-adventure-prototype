@@ -56,6 +56,7 @@ from core.types import (
 )
 from runtime.game_world import GameWorld
 import content.yanan as yanan_module
+import content.aincrad as aincrad_module
 
 
 mcp = FastMCP("text-adventure")
@@ -65,6 +66,7 @@ SAVE_DIR.mkdir(exist_ok=True)
 
 WORLDS = {
     "yanan": yanan_module,
+    "aincrad": aincrad_module,
 }
 
 
@@ -927,9 +929,18 @@ def _resolve_damage(bearer, raw_dmg: int, dmg_type: str,
     """
     match_context = match_context or {}
 
-    # ── damage 类 modifier（武器增伤、易伤等）──
+    # ── damage 类 modifier ──
+    # 来源三路：① 全局池（武器增伤、易伤）② 玩家 buff 的 on_check damage 发射
+    # （如剑技"蓄力斩"+4）③ 技能 passive 的 damage 修正。后两路靠各自 selector
+    # 过滤——只在 reason 匹配（如"攻击/斩"）时生效，敌人/环境伤害不会误吃玩家增伤。
+    dmg_mods = list(_collect_for_target("damage", match_context))
+    if SESSION.started:
+        for m in _emit_buff_modifiers(SESSION.state, "on_check") + _emit_skill_passive_modifiers(SESSION.state):
+            if m.target == "damage" and _match_selector(m.selector, match_context):
+                dmg_mods.append(m)
+
     dmg_total = raw_dmg
-    for m in _collect_for_target("damage", match_context):
+    for m in dmg_mods:
         if m.op == "add":
             dmg_total += int(m.value)
         elif m.op == "mul":
