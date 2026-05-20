@@ -98,7 +98,14 @@ SESSION = Session()
 
 def _require_started() -> Optional[dict]:
     if not SESSION.started:
-        return {"ok": False, "error": "游戏尚未开始，请先调用 start_game()。"}
+        # 进程可能重启过、内存 SESSION 丢了——先尝试从自动存档无缝恢复
+        if _maybe_restore_autosave():
+            return None
+        return {
+            "ok": False,
+            "error": "状态丢失（可能进程重启）。无自动存档可恢复——"
+                     "请用 load_game(slot) 载入手动存档，或 start_game(world) 新开一局。",
+        }
     return None
 
 
@@ -729,6 +736,7 @@ def start_game(world: str = "yanan") -> dict:
     )
 
     SESSION = Session(world_name=world, world=new_world, state=new_state)
+    _autosave()  # 新开局立即落盘，覆盖旧 autosave（防进程重启误恢复到上一局）
 
     scene = _room_snapshot(new_world, new_state)
     canon_prompt = new_world.get_world_canon_prompt()
@@ -804,7 +812,9 @@ def _advance_turn(state: GameState) -> list:
         if skill.active and skill.active.remaining_cooldown > 0:
             skill.active.remaining_cooldown -= 1
     state.improvised_buff_count_this_turn = 0  # reset per-turn gate
-    return state.tick_ttl()
+    expired = state.tick_ttl()
+    _autosave()  # 探索回合推进后落盘（覆盖 move/inspect/call_affordance）
+    return expired
 
 
 # ── Phase 2：Buff 引擎 ────────────────────────────────────────────────
@@ -2028,6 +2038,7 @@ def learn_skill(skill_id: str) -> dict:
     learned = _clone_skill(template)
     state.skills.append(learned)
 
+    _autosave()
     return {
         "ok": True,
         "learned": _skill_snapshot(learned),
@@ -2057,6 +2068,7 @@ def grant_xp(skill_id: str, xp: int, reason: str = "") -> dict:
     growth["reason"] = reason
     growth["ok"] = True
     growth["skill"] = _skill_snapshot(skill)
+    _autosave()
     return growth
 
 
@@ -2121,6 +2133,7 @@ def use_skill(skill_id: str) -> dict:
     # ── 进入冷却 ──
     act.remaining_cooldown = act.cooldown
 
+    _autosave()
     return {
         "ok": True,
         "skill_id": skill_id,
@@ -2477,6 +2490,7 @@ def end_combat(reason: str = "") -> dict:
     }
 
     SESSION.encounter = None
+    _autosave()  # 战斗结束、hp 写回 state 后落盘
     return result
 
 
@@ -2853,6 +2867,7 @@ def deal_damage(target: str, amount: int, damage_type: str = "blunt",
     if result["destroyed"]:
         payload["on_destroyed"] = _run_on_destroyed(obj, state, world)
         payload["scene"] = _room_snapshot(world, state)
+        _autosave()  # on_destroyed 改了 flags/物体，落盘
 
     return payload
 
@@ -3139,6 +3154,7 @@ def set_custom_attribute(
     attrs = SESSION.state.player_attrs if scope == "player" else SESSION.state.world_attrs
     attrs[clean_key] = entry
 
+    _autosave()
     return {
         "ok": True,
         "scope": scope,
@@ -3542,6 +3558,7 @@ def update_quest(
     if unresolved:
         target.unresolved = [u for u in unresolved if isinstance(u, str)]
 
+    _autosave()
     return {
         "ok": True,
         "quest_id": quest_id,
@@ -3585,26 +3602,14 @@ def gm_set_flag(flag: str, value: bool = True, unlock_exit: str = "") -> dict:
             result["unlock_note"] = f"当前房间没有 {unlock_exit} 方向出口"
 
     result["hud"] = _build_hud(state, world)
+    _autosave()
     return result
 
 
-@mcp.tool()
-def save_game(slot: str = "default") -> dict:
-    """将当前游戏状态存档到文件。
-
-    Args:
-        slot: 存档槽名称（字母数字，默认 "default"）
-    """
-    if err := _require_started():
-        return err
-
-    # Sanitize slot name
-    safe_slot = "".join(c for c in slot if c.isalnum() or c in "-_")[:32] or "default"
-    path = SAVE_DIR / f"{safe_slot}.json"
-
-    state = SESSION.state
-    data = {
-        "world": SESSION.world_name,
+def _serialize_state(state: GameState, world_name: str) -> dict:
+    """把 GameState 序列化成可 JSON 化的 dict。save_game / _autosave 共用。"""
+    return {
+        "world": world_name,
         "position": state.position,
         "inventory": [
             {
@@ -3659,9 +3664,159 @@ def save_game(slot: str = "default") -> dict:
         "player_attrs": state.player_attrs,
         "world_attrs": state.world_attrs,
     }
+
+
+AUTOSAVE_SLOT = "_autosave"
+
+
+def _autosave() -> None:
+    """静默写自动存档。失败绝不阻塞游戏（写盘异常吞掉）。
+
+    每次状态变更后调用——进程重启后可由 _maybe_restore_autosave 无缝恢复，
+    根治"玩到一半进程重启、内存 SESSION 丢失"。
+    """
+    if not SESSION.started:
+        return
+    try:
+        data = _serialize_state(SESSION.state, SESSION.world_name)
+        path = SAVE_DIR / f"{AUTOSAVE_SLOT}.json"
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass  # 存档失败不能让游戏崩
+
+
+@mcp.tool()
+def save_game(slot: str = "default") -> dict:
+    """将当前游戏状态存档到文件。
+
+    Args:
+        slot: 存档槽名称（字母数字，默认 "default"）
+    """
+    if err := _require_started():
+        return err
+
+    # Sanitize slot name
+    safe_slot = "".join(c for c in slot if c.isalnum() or c in "-_")[:32] or "default"
+    path = SAVE_DIR / f"{safe_slot}.json"
+
+    data = _serialize_state(SESSION.state, SESSION.world_name)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return {"ok": True, "slot": safe_slot, "path": str(path), "turn": state.turn}
+    return {"ok": True, "slot": safe_slot, "path": str(path), "turn": SESSION.state.turn}
+
+
+def _session_from_data(data: dict) -> Optional[Session]:
+    """从序列化 dict 重建一个 Session。world 未安装则返回 None。
+
+    load_game 和启动自恢复（_maybe_restore_autosave）共用，保证两条路径一致。
+    """
+    world_name = data.get("world", "yanan")
+    if world_name not in WORLDS:
+        return None
+
+    new_world = GameWorld(content_module=WORLDS[world_name])
+
+    inventory = [
+        InventoryItem(
+            id=i["id"], name=i["name"], desc=i.get("desc", ""),
+            tags=i.get("tags", []), ttl=i.get("ttl", -1),
+            kind=i.get("kind", "item"),
+            named_tags=i.get("named_tags", []),
+            modifiers=i.get("modifiers", []),
+        )
+        for i in data.get("inventory", [])
+    ]
+    # Backward compat: clues may be old-style plain strings or new-style dicts
+    clues = []
+    for c in data.get("clues", []):
+        if isinstance(c, str):
+            clues.append(Clue(text=c, tags=[], turn=data.get("turn", 0)))
+        elif isinstance(c, dict):
+            clues.append(Clue(
+                text=c.get("text", ""), tags=c.get("tags", []),
+                turn=c.get("turn", 0), cold=c.get("cold", False),
+            ))
+
+    dialogue_log = [
+        DialogueEntry(
+            turn=d.get("turn", 0), npc_id=d.get("npc_id", ""),
+            summary=d.get("summary", ""), tags=d.get("tags", []),
+            cold=d.get("cold", False),
+        )
+        for d in data.get("dialogue_log", [])
+    ]
+
+    room_snapshots = {
+        rid: RoomSnapshot(
+            room_id=rs.get("room_id", rid),
+            last_visited_turn=rs.get("last_visited_turn", 0),
+            objects_state=rs.get("objects_state", {}),
+            flags_set_here=rs.get("flags_set_here", []),
+        )
+        for rid, rs in data.get("room_snapshots", {}).items()
+    }
+
+    new_state = GameState(
+        position=data["position"],
+        inventory=inventory,
+        flags=data.get("flags", {}),
+        alertness=data.get("alertness", 0),
+        clues=clues,
+        turn=data.get("turn", 0),
+        profile=ActorProfile(**data.get("profile", {})),
+        vitals=VitalStats(**data.get("vitals", {})),
+        conditions=data.get("conditions", []),
+        relationships=data.get("relationships", {}),
+        world_time=WorldTime(**data.get("world_time", {})),
+        quest_log=[
+            QuestEntry(
+                id=q["id"], title=q["title"], stage=q["stage"],
+                summary=q.get("summary", ""), deadline=q.get("deadline", ""),
+                known_facts=q.get("known_facts", []),
+                unresolved=q.get("unresolved", []),
+            )
+            for q in data.get("quest_log", [])
+        ],
+        dialogue_log=dialogue_log,
+        room_snapshots=room_snapshots,
+        buffs=_load_buffs(data.get("buffs", [])),
+        skills=_load_skills(data.get("skills", [])),
+        player_attrs=_clean_custom_attributes(data.get("player_attrs", {})),
+        world_attrs=_clean_custom_attributes(data.get("world_attrs", {})),
+    )
+
+    session = Session(world_name=world_name, world=new_world, state=new_state)
+    # 恢复后重建 buff 派生的全局 modifier 池（modifiers 不入存档，由 buff/skill 重新发射）
+    global SESSION
+    _prev = SESSION
+    SESSION = session
+    try:
+        _refresh_persistent_buff_mods(new_state)
+    finally:
+        SESSION = _prev
+    return session
+
+
+def _maybe_restore_autosave() -> bool:
+    """server 启动 / 首次需要状态时，若有自动存档则恢复 SESSION。返回是否恢复成功。
+
+    根治"进程重启后内存 SESSION 丢失、玩到一半说没开始"。失败静默（坏档不阻塞）。
+    """
+    global SESSION
+    if SESSION.started:
+        return False
+    path = SAVE_DIR / f"{AUTOSAVE_SLOT}.json"
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        restored = _session_from_data(data)
+        if restored:
+            SESSION = restored
+            return True
+    except Exception:
+        pass
+    return False
 
 
 @mcp.tool()
@@ -3680,103 +3835,26 @@ def load_game(slot: str = "default") -> dict:
         return {"ok": False, "error": f"存档 {safe_slot!r} 不存在"}
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    world_name = data.get("world", "yanan")
+    restored = _session_from_data(data)
+    if not restored:
+        return {"ok": False, "error": f"存档中的世界 {data.get('world')!r} 未安装"}
 
-    if world_name not in WORLDS:
-        return {"ok": False, "error": f"存档中的世界 {world_name!r} 未安装"}
-
-    module = WORLDS[world_name]
-    new_world = GameWorld(content_module=module)
-
-    inventory = [
-        InventoryItem(
-            id=i["id"], name=i["name"], desc=i.get("desc", ""),
-            tags=i.get("tags", []), ttl=i.get("ttl", -1),
-            kind=i.get("kind", "item"),
-            named_tags=i.get("named_tags", []),
-            modifiers=i.get("modifiers", []),
-        )
-        for i in data.get("inventory", [])
-    ]
-    # Backward compat: clues may be old-style plain strings or new-style dicts
-    raw_clues = data.get("clues", [])
-    clues = []
-    for c in raw_clues:
-        if isinstance(c, str):
-            clues.append(Clue(text=c, tags=[], turn=data.get("turn", 0)))
-        elif isinstance(c, dict):
-            clues.append(Clue(
-                text=c.get("text", ""), tags=c.get("tags", []),
-                turn=c.get("turn", 0), cold=c.get("cold", False),
-            ))
-
-    raw_dialogues = data.get("dialogue_log", [])
-    dialogue_log = [
-        DialogueEntry(
-            turn=d.get("turn", 0), npc_id=d.get("npc_id", ""),
-            summary=d.get("summary", ""), tags=d.get("tags", []),
-            cold=d.get("cold", False),
-        )
-        for d in raw_dialogues
-    ]
-
-    raw_snapshots = data.get("room_snapshots", {})
-    room_snapshots = {
-        rid: RoomSnapshot(
-            room_id=rs.get("room_id", rid),
-            last_visited_turn=rs.get("last_visited_turn", 0),
-            objects_state=rs.get("objects_state", {}),
-            flags_set_here=rs.get("flags_set_here", []),
-        )
-        for rid, rs in raw_snapshots.items()
-    }
-
-    new_state = GameState(
-        position=data["position"],
-        inventory=inventory,
-        flags=data.get("flags", {}),
-        alertness=data.get("alertness", 0),
-        clues=clues,
-        turn=data.get("turn", 0),
-        profile=ActorProfile(**data.get("profile", {})),
-        vitals=VitalStats(**data.get("vitals", {})),
-        conditions=data.get("conditions", []),
-        relationships=data.get("relationships", {}),
-        world_time=WorldTime(**data.get("world_time", {})),
-        quest_log=[
-            QuestEntry(
-                id=q["id"],
-                title=q["title"],
-                stage=q["stage"],
-                summary=q.get("summary", ""),
-                deadline=q.get("deadline", ""),
-                known_facts=q.get("known_facts", []),
-                unresolved=q.get("unresolved", []),
-            )
-            for q in data.get("quest_log", [])
-        ],
-        dialogue_log=dialogue_log,
-        room_snapshots=room_snapshots,
-        buffs=_load_buffs(data.get("buffs", [])),
-        skills=_load_skills(data.get("skills", [])),
-        player_attrs=_clean_custom_attributes(data.get("player_attrs", {})),
-        world_attrs=_clean_custom_attributes(data.get("world_attrs", {})),
-    )
-
-    SESSION = Session(world_name=world_name, world=new_world, state=new_state)
-    scene = _room_snapshot(new_world, new_state)
-
+    SESSION = restored
     return {
         "ok": True,
         "slot": safe_slot,
-        "world": world_name,
-        "turn": new_state.turn,
-        "scene": scene,
-        "inventory": _inventory_snapshot(new_state),
-        "clues": _clues_snapshot(new_state.clues),
-        "state_context": _state_context(new_state),
-        "hud": _build_hud(new_state, new_world),
+        "world": SESSION.world_name,
+        "turn": SESSION.state.turn,
+        "scene": _room_snapshot(SESSION.world, SESSION.state),
+        "inventory": _inventory_snapshot(SESSION.state),
+        "clues": _clues_snapshot(SESSION.state.clues),
+        "state_context": _state_context(SESSION.state),
+        "hud": _build_hud(SESSION.state, SESSION.world),
     }
+
+
+# server 进程启动时尝试恢复自动存档（进程重启无缝续上）
+_maybe_restore_autosave()
 
 
 if __name__ == "__main__":
