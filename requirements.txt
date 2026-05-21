@@ -2,6 +2,8 @@
 mcp>=1.2.0
 python-dotenv>=1.0.0
 
-# 独立运行层（standalone/：自带 LLM + agent loop + TUI，脱离宿主单独跑）
+# 独立运行层（standalone/：自带 LLM + agent loop，脱离宿主单独跑）
 openai>=1.0.0       # OpenAI 兼容客户端，DeepSeek/OpenAI/本地皆走它
-textual>=1.0.0      # TUI 前端
+textual>=1.0.0      # TUI 前端（standalone.tui）
+fastapi>=0.110.0    # Web 前端后端（standalone.web）
+uvicorn>=0.20.0     # ASGI server，跑 fastapi

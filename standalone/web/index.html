@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文字冒险</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@200;300&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* 暖墨黑配色（oklch，低饱和、不扎眼）*/
+  --bg:        oklch(0.155 0.012 55);
+  --bg-soft:   oklch(0.185 0.013 55);
+  --panel:     oklch(0.205 0.014 55);
+  --line:      oklch(0.32  0.012 55);
+  --line-soft: oklch(0.26  0.011 55);
+  --fg:        oklch(0.92  0.012 80);
+  --fg-dim:    oklch(0.66  0.012 75);
+  --fg-mute:   oklch(0.48  0.011 70);
+  /* 语义色（克制使用）*/
+  --amber:  oklch(0.82 0.135 75);
+  --cyan:   oklch(0.80 0.085 215);
+  --green:  oklch(0.78 0.13 152);
+  --red:    oklch(0.72 0.17 28);
+  --violet: oklch(0.74 0.12 295);
+
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sans: 'Noto Sans SC', system-ui, sans-serif;
+  --serif:'Noto Serif SC', serif;
+
+  --ease-in:  cubic-bezier(.2,.7,.2,1);
+  --ease-out: cubic-bezier(.6,.2,.7,.3);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:var(--sans); font-size:15.5px; line-height:1.78;
+  display:flex; flex-direction:column; height:100vh; overflow:hidden;
+}
+.mono{font-family:var(--mono)}
+.label{font-family:var(--mono); font-size:10.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--fg-mute)}
+
+/* ── 顶栏（极弱）── */
+#topbar{
+  flex:0 0 auto; display:flex; align-items:center; gap:14px;
+  padding:6px 14px; border-bottom:1px solid var(--line-soft);
+  font-family:var(--mono); font-size:11.5px; color:var(--fg-mute);
+}
+#topbar .dot{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber)}
+#topbar .sp{flex:1}
+
+/* ── 状态条 + Tab ── */
+#statusbar{
+  flex:0 0 auto; display:flex; align-items:stretch; gap:0;
+  border-bottom:1px solid var(--line-soft); background:var(--bg-soft);
+}
+#stats{display:flex; gap:0; flex:1; min-width:0; overflow:hidden}
+.stat{
+  display:flex; flex-direction:column; gap:3px; justify-content:center;
+  padding:8px 16px; border-right:1px solid var(--line-soft);
+  cursor:default; transition:background .2s var(--ease-in); position:relative;
+}
+.stat:hover{background:var(--panel)}
+.stat .k{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute)}
+.stat .v{font-family:var(--mono);font-size:13px;color:var(--fg-dim)}
+.stat .bar{height:2px;width:54px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:1px}
+.stat .bar i{display:block;height:100%;background:var(--fg-mute);transition:width .35s var(--ease-in),background .2s}
+.stat:hover .bar i{background:var(--accent,var(--amber))}
+.stat[data-sem=hp]{--accent:var(--red)} .stat[data-sem=sp]{--accent:var(--cyan)}
+.stat[data-sem=str]{--accent:var(--red)} .stat[data-sem=dex]{--accent:var(--cyan)}
+.stat[data-sem=con]{--accent:var(--green)} .stat[data-sem=int]{--accent:var(--violet)}
+#tabs{display:flex}
+.tab{
+  display:flex;align-items:center;gap:6px;padding:8px 14px;cursor:pointer;
+  border-left:1px solid var(--line-soft); color:var(--fg-mute);
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  transition:color .2s,background .2s;
+}
+.tab:hover{color:var(--fg-dim);background:var(--panel)}
+.tab .badge{font-size:9px;border:1px solid var(--line);border-radius:3px;padding:0 4px;color:var(--fg-mute)}
+
+/* ── 主舞台 ── */
+#stage-wrap{flex:1 1 auto; min-height:0; padding:14px 22px; overflow:hidden; display:flex; flex-direction:column}
+#stage-head{
+  font-family:var(--mono);font-size:11px;color:var(--fg-mute);letter-spacing:.12em;
+  padding-bottom:8px; border-bottom:1px solid var(--line-soft); margin-bottom:10px;
+  display:flex; gap:10px; align-items:center;
+}
+#stage-head .live{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+#stage{flex:1 1 auto; overflow-y:auto; padding-right:8px; scroll-behavior:smooth}
+#stage::-webkit-scrollbar{width:8px} #stage::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+
+/* 消息样式 */
+.msg{margin:0 0 18px 0; animation:fadein .35s var(--ease-in)}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.msg.gm{color:var(--fg); max-width:70ch}
+.msg.gm em{font-style:normal;font-weight:600;color:var(--fg)}        /* 强调用字重不用色 */
+.msg.gm strong{font-weight:600;color:var(--fg)}
+.msg.gm code{font-family:var(--mono);font-size:12.5px;color:var(--fg-dim);background:var(--bg-soft);padding:1px 5px;border-radius:3px}
+.msg.gm pre{font-family:var(--mono);font-size:12.5px;color:var(--fg-dim);background:var(--bg-soft);border:1px solid var(--line-soft);border-radius:6px;padding:10px 14px;margin:10px 0;line-height:1.6;white-space:pre-wrap;overflow-x:auto}
+.msg.player{color:var(--fg-mute); padding-left:14px}
+.msg.player::before{content:'› ';color:var(--fg-mute)}
+.msg.system{font-family:var(--mono);font-size:12.5px;color:var(--fg-mute);display:flex;gap:8px;align-items:baseline}
+.msg.system .pip{width:7px;height:7px;border-radius:50%;background:var(--fg-mute);flex:0 0 auto;margin-top:6px}
+.msg.system.ok .pip{background:var(--green)} .msg.system.fail .pip{background:var(--red)} .msg.system.warn .pip{background:var(--amber)}
+.thinking{color:var(--fg-mute);font-family:var(--mono);font-size:12px;font-style:italic;opacity:.8}
+.cursor::after{content:'▌';color:var(--amber);animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ── 输入栏 ── */
+#inputbar{
+  flex:0 0 auto; display:flex; align-items:center; gap:10px;
+  padding:10px 18px; border-top:1px solid var(--line-soft); background:var(--bg-soft);
+}
+.modes{display:flex;gap:6px}
+.mode{
+  font-family:var(--mono);font-size:11px;padding:3px 11px;border-radius:13px;cursor:pointer;
+  border:1px solid var(--line); color:var(--fg-mute); transition:all .18s var(--ease-in);
+}
+.mode.active{background:var(--amber);color:var(--bg);border-color:var(--amber);font-weight:500}
+#prompt-sign{color:var(--amber);font-family:var(--mono);font-size:16px}
+#input{
+  flex:1; background:transparent; border:none; outline:none; color:var(--fg);
+  font-family:var(--sans); font-size:15px;
+}
+#input::placeholder{color:var(--fg-mute)}
+#submit{
+  font-family:var(--mono);font-size:11px;color:var(--fg-mute);cursor:pointer;
+  border:1px solid var(--line);border-radius:5px;padding:4px 10px;transition:all .18s;
+}
+#submit:hover{color:var(--amber);border-color:var(--amber)}
+#inputbar.busy{opacity:.5;pointer-events:none}
+
+/* ── 重大事件仪式（视觉外壳，P1 接数据）── */
+#spectacle{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;z-index:50}
+#spectacle.show{display:flex}
+#spectacle .scrim{position:absolute;inset:0;background:oklch(0.1 0.01 55 / .78);backdrop-filter:blur(10px);animation:scrimin .9s var(--ease-in)}
+@keyframes scrimin{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1}}
+#spectacle .rule{height:1px;background:linear-gradient(90deg,transparent,var(--amber),transparent);width:920px;max-width:88vw;animation:ruleopen 1s var(--ease-in)}
+@keyframes ruleopen{from{width:0;opacity:0}to{opacity:.7}}
+#spectacle .sub-label{font-family:var(--mono);font-size:11px;letter-spacing:.3em;color:var(--amber);text-transform:uppercase;margin:18px 0 10px}
+#spectacle .title{font-family:var(--serif);font-weight:200;font-size:clamp(44px,7.2vw,104px);color:var(--fg);text-align:center;animation:develop 1.3s var(--ease-in)}
+@keyframes develop{from{letter-spacing:.55em;filter:blur(10px);opacity:0}to{letter-spacing:.14em;filter:blur(0);opacity:1}}
+#spectacle .desc{font-family:var(--sans);color:var(--fg-dim);margin-top:20px;animation:fadein 1s .9s both}
+#spectacle .hint{font-family:var(--mono);font-size:11px;color:var(--fg-mute);margin-top:30px;animation:fadein 1s 1.4s both}
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <span class="dot"></span>
+    <span class="mono" id="session-id">SESSION · ····</span>
+    <span class="mono" id="topbar-world">—</span>
+    <span class="sp"></span>
+    <span class="mono">I 背包 · M 地图 · Q 任务 · ↵ 提交</span>
+  </div>
+
+  <div id="statusbar">
+    <div id="stats"><div class="stat"><span class="k">连接中</span><span class="v">…</span></div></div>
+    <div id="tabs">
+      <div class="tab" data-tab="inventory"><span>背包</span><span class="badge">I</span></div>
+      <div class="tab" data-tab="skills"><span>技能</span><span class="badge">S</span></div>
+      <div class="tab" data-tab="quest"><span>任务</span><span class="badge">Q</span></div>
+    </div>
+  </div>
+
+  <div id="stage-wrap">
+    <div id="stage-head"><span class="live"></span><span id="stage-scene">序章</span><span class="sp" style="flex:1"></span><span>GM 在线</span></div>
+    <div id="stage"></div>
+  </div>
+
+  <div id="inputbar">
+    <div class="modes">
+      <span class="mode active" data-mode="say">说话</span>
+      <span class="mode" data-mode="act">行动</span>
+      <span class="mode" data-mode="ooc">场外</span>
+    </div>
+    <span id="prompt-sign">›</span>
+    <input id="input" placeholder="输入你的行动…" autocomplete="off">
+    <span id="submit">提交 ↵</span>
+  </div>
+
+  <div id="spectacle">
+    <div class="scrim"></div>
+    <div class="rule"></div>
+    <div class="sub-label" id="spec-label">◆ EVENT</div>
+    <div class="title" id="spec-title">命运降临</div>
+    <div class="desc" id="spec-desc"></div>
+    <div class="rule"></div>
+    <div class="hint">点击任意处 · 或 Esc</div>
+  </div>
+
+<script>
+const $ = s => document.querySelector(s);
+const stage = $('#stage');
+let mode = 'say', busy = false;
+
+// ── 极简 markdown：仅 GM 叙事需要（代码块/加粗/em/行内码）──
+function mdToHtml(t){
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const parts = t.split(/```/);
+  let out = '';
+  parts.forEach((seg,i)=>{
+    if(i%2===1){ out += '<pre>'+esc(seg.replace(/^\n/,'').replace(/\n$/,''))+'</pre>'; return; }
+    let h = esc(seg)
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g,'<em>$1</em>')
+      .replace(/`([^`]+?)`/g,'<code>$1</code>')
+      .replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>');
+    out += '<p>'+h+'</p>';
+  });
+  return out;
+}
+
+function addPlayer(text){
+  const d = document.createElement('div'); d.className='msg player'; d.textContent=text;
+  stage.appendChild(d); scrollEnd();
+}
+function newGM(){
+  const d = document.createElement('div'); d.className='msg gm cursor'; d.dataset.raw='';
+  stage.appendChild(d); scrollEnd(); return d;
+}
+function scrollEnd(){ stage.scrollTop = stage.scrollHeight; }
+
+// ── 状态条（去-CoC：动态属性）──
+async function refreshHud(){
+  try{
+    const s = await (await fetch('/state')).json();
+    if(!s.started) return;
+    $('#topbar-world').textContent = s.world || '';
+    $('#stage-scene').textContent = s.position || '';
+    const stats = $('#stats'); stats.innerHTML='';
+    const v = s.vitals;
+    mkStat(stats,'hp','HP', v.hp+'/'+v.max_hp, v.hp/v.max_hp);
+    if(v.max_stamina>0) mkStat(stats,'sp','SP', v.stamina+'/'+v.max_stamina, v.stamina/v.max_stamina);
+    mkStat(stats,'lv','LV', 'Lv.'+v.level, null);
+    (s.attributes||[]).forEach(a=> mkStat(stats, a.key, a.label, a.value, Math.min(1,a.value/12)));
+    mkStat(stats,'gold','金币', v.gold, null);
+  }catch(e){}
+}
+function mkStat(parent, sem, k, v, ratio){
+  const d=document.createElement('div'); d.className='stat'; d.dataset.sem=sem;
+  d.innerHTML = `<span class="k">${k}</span><span class="v">${v}</span>`+
+    (ratio!=null?`<span class="bar"><i style="width:${Math.round(ratio*100)}%"></i></span>`:'');
+  parent.appendChild(d);
+}
+
+// ── 一个回合：POST /turn，消费 SSE ──
+async function sendTurn(text){
+  if(busy) return; busy=true; $('#inputbar').classList.add('busy');
+  if(text) addPlayer(text);
+  const think = document.createElement('div'); think.className='thinking'; think.textContent='⋯ GM 正在推演';
+  stage.appendChild(think); scrollEnd();
+  let gm=null;
+  try{
+    const resp = await fetch('/turn',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({input:text, mode})});
+    const reader = resp.body.getReader(); const dec=new TextDecoder(); let buff='';
+    while(true){
+      const {value,done}=await reader.read(); if(done) break;
+      buff += dec.decode(value,{stream:true});
+      let idx;
+      while((idx=buff.indexOf('\n\n'))>=0){
+        const chunk=buff.slice(0,idx); buff=buff.slice(idx+2);
+        const ev=(chunk.match(/^event: (.+)$/m)||[])[1];
+        const dm=(chunk.match(/^data: (.+)$/m)||[]); if(!dm[1]) continue;
+        const data=JSON.parse(dm[1]);
+        if(ev==='delta'){
+          if(think.parentNode) think.remove();
+          if(!gm) gm=newGM();
+          gm.dataset.raw += data.text;
+          gm.innerHTML = mdToHtml(gm.dataset.raw); gm.classList.add('cursor');
+          scrollEnd();
+        }else if(ev==='tool'){
+          think.textContent='⋯ GM 正在查看（'+data.name+'）';
+        }else if(ev==='final'){
+          if(gm){ gm.classList.remove('cursor'); gm.innerHTML=mdToHtml(gm.dataset.raw||data.text); }
+        }else if(ev==='hud'){
+          renderHud(data);
+        }else if(ev==='error'){
+          if(think.parentNode) think.remove();
+          addSystem('✗ '+data.message,'fail');
+        }
+      }
+    }
+  }catch(e){ addSystem('✗ 连接出错：'+e,'fail'); }
+  finally{ if(think.parentNode) think.remove(); busy=false; $('#inputbar').classList.remove('busy'); $('#input').focus(); }
+}
+function addSystem(text,cls){
+  const d=document.createElement('div'); d.className='msg system '+(cls||'');
+  d.innerHTML='<span class="pip"></span><span>'+text+'</span>'; stage.appendChild(d); scrollEnd();
+}
+function renderHud(s){
+  if(!s||!s.started) return;
+  $('#topbar-world').textContent=s.world||''; $('#stage-scene').textContent=s.position||'';
+  const stats=$('#stats'); stats.innerHTML=''; const v=s.vitals;
+  mkStat(stats,'hp','HP',v.hp+'/'+v.max_hp,v.hp/v.max_hp);
+  if(v.max_stamina>0) mkStat(stats,'sp','SP',v.stamina+'/'+v.max_stamina,v.stamina/v.max_stamina);
+  mkStat(stats,'lv','LV','Lv.'+v.level,null);
+  (s.attributes||[]).forEach(a=>mkStat(stats,a.key,a.label,a.value,Math.min(1,a.value/12)));
+  mkStat(stats,'gold','金币',v.gold,null);
+}
+
+// ── 输入交互 ──
+document.querySelectorAll('.mode').forEach(m=>m.onclick=()=>{
+  document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));
+  m.classList.add('active'); mode=m.dataset.mode; $('#input').focus();
+});
+function submit(){ const t=$('#input').value.trim(); if(!t||busy) return; $('#input').value=''; sendTurn(t); }
+$('#submit').onclick=submit;
+$('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();submit();} });
+
+// 仪式：点击/Esc 关闭（P0 只有外壳，P1 由后端 spectacle 事件触发）
+function closeSpectacle(){ $('#spectacle').classList.remove('show'); }
+$('#spectacle').onclick=closeSpectacle;
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSpectacle(); });
+
+// ── 开局 ──
+$('#session-id').textContent='SESSION · '+Math.floor(Math.random()*9000+1000);
+window.addEventListener('load',()=>{ sendTurn(''); $('#input').focus(); });
+</script>
+</body>
+</html>
