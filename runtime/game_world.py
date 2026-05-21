@@ -1,7 +1,7 @@
 """Game world: manages rooms, objects, item interactions, world canon."""
 
 from typing import Dict, List, Optional, Tuple
-from core.types import Room, GameObject, Affordance, GameState, WorldCanon, InventoryItem, EnemyTemplate, Skill
+from core.types import Room, GameObject, Affordance, GameState, WorldCanon, InventoryItem, EnemyTemplate, Skill, RuleBook
 
 
 class GameWorld:
@@ -12,6 +12,7 @@ class GameWorld:
         self.skills: Dict[str, Skill] = {}
         self.initial_state: Optional[GameState] = None
         self.world_canon: Optional[WorldCanon] = None
+        self.rulebook: RuleBook = RuleBook()              # §11：默认 RuleBook，content 可覆盖
         if content_module:
             content_module.register(self)
 

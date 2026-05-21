@@ -48,13 +48,13 @@ class PassiveModifierTest(unittest.TestCase):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="潜行躲过守卫", sides=20)
         self.assertEqual(rolled["raw"], 10)
-        self.assertEqual(rolled["total"], 12)  # 10 + 2
+        self.assertEqual(rolled["total"], 15)  # 10 + 2(潜行passive) + 3(敏)
 
     def test_passive_does_not_apply_to_unrelated_roll(self):
         mcp_server.learn_skill("stealth_training")
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="撬锁", sides=20)
-        self.assertEqual(rolled["total"], 10)  # selector 不匹配，无加值
+        self.assertEqual(rolled["total"], 13)  # selector 不匹配，无被动加值，但敏+3
 
     def test_passive_shows_in_audit_trail(self):
         mcp_server.learn_skill("stealth_training")
@@ -68,7 +68,7 @@ class PassiveModifierTest(unittest.TestCase):
     def test_no_passive_without_skill(self):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="潜行", sides=20)
-        self.assertEqual(rolled["total"], 10)
+        self.assertEqual(rolled["total"], 13)  # 10 + 3(敏)
 
 
 class GrantXpRankUpTest(unittest.TestCase):
@@ -123,7 +123,7 @@ class SkillSaveLoadTest(unittest.TestCase):
         mcp_server.SESSION.modifiers.clear()
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="潜行", sides=20)
-        self.assertEqual(rolled["total"], 12)
+        self.assertEqual(rolled["total"], 15)  # 10 + 2(rank2潜行被动) + 3(敏)
 
         from pathlib import Path
         Path(saved["path"]).unlink(missing_ok=True)

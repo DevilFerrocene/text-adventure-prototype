@@ -14,6 +14,7 @@ from core.types import (
     Room, GameObject, Affordance, GameState, WorldCanon, InventoryItem,
     ActorProfile, VitalStats, WorldTime, QuestEntry, EnemyTemplate,
     Skill, ActiveSkill, ReactiveSkill, Step, Modifier,
+    RuleBook,
 )
 from runtime.game_world import GameWorld
 
@@ -117,6 +118,14 @@ def register(world: GameWorld):
     world.set_world_canon(YANAN_CANON)
     world.register_enemies(ENEMIES)
     world.register_skills(SKILLS)
+
+    # §11：亚楠 RuleBook（蒸汽朋克侦探风：智略型）
+    world.rulebook = RuleBook(
+        attributes={"str": "力量", "dex": "敏捷", "con": "体质", "int": "智力"},
+        roles={"accuracy": "dex", "hp_growth": "con", "stamina_pool": "int"},
+        equip_slots={"weapon": "主手", "armor": "护甲", "accessory": "饰品", "boots": "鞋"},
+        level_curve="quadratic",
+    )
 
     # ── 房间 ─────────────────────────────────────────────────────
 
@@ -819,6 +828,9 @@ def register(world: GameWorld):
             max_hp=10,
             gold=50000,
             reputation=0,
+            level=1,
+            exp=0,
+            attributes={"str": 2, "dex": 3, "con": 2, "int": 3},
         ),
         conditions=["rain-soaked"],
         relationships={

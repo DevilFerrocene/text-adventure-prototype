@@ -16,19 +16,19 @@ class BeforeRollReactiveTest(unittest.TestCase):
     def test_reactive_fires_on_matching_roll(self):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="察觉巷口的偷袭", sides=20)
-        self.assertEqual(rolled["total"], 13)  # 10 + 3 街头直觉
+        self.assertEqual(rolled["total"], 16)  # 10 + 3(街头直觉) + 3(敏)
 
     def test_reactive_does_not_fire_on_unrelated_roll(self):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="撬锁", sides=20)
-        self.assertEqual(rolled["total"], 10)
+        self.assertEqual(rolled["total"], 13)  # 10 + 3(敏)，reactive不匹配
 
     def test_reactive_modifier_is_one_shot_not_stacking(self):
         # 连续两次偷袭掷骰，第二次不应叠加（用完即清）
         with patch("mcp_server.random.randint", return_value=10):
             mcp_server.roll_check(reason="偷袭预警", sides=20)
             second = mcp_server.roll_check(reason="偷袭预警", sides=20)
-        self.assertEqual(second["total"], 13)  # 仍是 +3，不是 +6
+        self.assertEqual(second["total"], 16)  # 仍是 +3(反应)，+3(敏)，不是 +6
         # 池里没有残留的 reactive 修正
         self.assertFalse(any(m.source_id.startswith("reactive:") or
                              (m.source_kind == "skill" and m.reason == "街头直觉")

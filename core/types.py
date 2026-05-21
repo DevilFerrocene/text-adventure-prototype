@@ -215,6 +215,15 @@ class InventoryItem:
     kind: str = "item"
     named_tags: List[str] = field(default_factory=list)
     modifiers: List[str] = field(default_factory=list)
+    # 装备字段（§11 RPG 数值骨架）
+    equip_slot: str = ""            # 槽位 key，空=不可装备
+    damage_expr: str = ""           # 武器伤害表达式 "1d8"
+    damage_type: str = "blunt"      # 武器伤害类型
+    scaling: dict = field(default_factory=dict)      # {"str":1.0,"dex":0.5}
+    defense: int = 0                # AC 加成
+    resist: dict = field(default_factory=dict)       # {"fire":0.5}
+    attr_bonus: dict = field(default_factory=dict)   # {attr_key: +N}
+    use_effect: dict = field(default_factory=dict)   # 消耗品效果，如 {"heal":10,"restore_sp":3}
 
     @classmethod
     def from_object(cls, obj: "GameObject") -> "InventoryItem":
@@ -225,6 +234,15 @@ class InventoryItem:
             kind=obj.kind,
             named_tags=list(obj.named_tags),
             modifiers=list(obj.modifiers),
+            # 装备/消耗品数据随拾取迁移——否则场景里捡到的武器永远不可装备
+            equip_slot=obj.equip_slot,
+            damage_expr=obj.damage_expr,
+            damage_type=obj.damage_type,
+            scaling=dict(obj.scaling),
+            defense=obj.defense,
+            resist=dict(obj.resist),
+            attr_bonus=dict(obj.attr_bonus),
+            use_effect=dict(obj.use_effect),
         )
 
 
@@ -248,6 +266,11 @@ class VitalStats:
     stamina: int = 0
     max_stamina: int = 0
     damage_types_resist: dict = field(default_factory=dict)  # {"fire":0.5,...}
+    # RPG 数值骨架 (§11)
+    level: int = 1
+    exp: int = 0
+    attributes: dict = field(default_factory=dict)  # {attr_key: value}，key 由 RuleBook 定义
+    pending_attr_points: int = 0  # 待分配属性点
 
 
 @dataclass
@@ -366,6 +389,7 @@ class GameState:
     buffs: List[Buff] = field(default_factory=list)
     skills: List["Skill"] = field(default_factory=list)
     improvised_buff_count_this_turn: int = 0
+    equipped: dict = field(default_factory=dict)   # {slot: item_id}，§11 RPG 数值骨架
 
     def has_item(self, item_id: str) -> bool:
         return any(i.id == item_id for i in self.inventory)
@@ -452,12 +476,59 @@ class GameObject:
     damage_types_resist: Dict[str, float] = field(default_factory=dict)  # 空=全 1.0
     on_destroyed: List[Dict[str, Any]] = field(default_factory=list)     # list[Step]，hp 归零触发
     buffs: List["Buff"] = field(default_factory=list)                    # 着火/中毒等持续效应
+    # §11 装备/消耗品数据——拾取时由 InventoryItem.from_object 迁移到背包物
+    equip_slot: str = ""            # 槽位 key（weapon/armor/...），空=不可装备
+    damage_expr: str = ""           # 武器伤害表达式 "1d8"
+    damage_type: str = "blunt"      # 武器伤害类型
+    scaling: dict = field(default_factory=dict)      # {"str":1.0,"dex":0.5}
+    defense: int = 0                # 护甲 AC 加成
+    resist: dict = field(default_factory=dict)       # 护甲属性减伤 {"fire":0.5}
+    attr_bonus: dict = field(default_factory=dict)   # 属性加成 {attr_key:+N}
+    use_effect: dict = field(default_factory=dict)   # 消耗品效果 {"heal":10,"restore_sp":3}
+
+
+# ── §11 RPG 数值骨架：RuleBook + 常量 ────────────────────────────
+
+@dataclass
+class RuleBook:
+    """世界的数值规则书。属性集合 + 机制锚点指派。content 提供，引擎读取。
+
+    attributes   — {属性key: 显示名}，如 {"str":"力量","int":"智力"}
+    roles        — 机制锚点 → 属性key 的指派
+    equip_slots  — 该世界的装备槽
+    level_curve  — 升级曲线选择（引擎内置几条，选一条）
+    """
+    attributes: Dict[str, str] = field(default_factory=lambda: {"str": "力量", "dex": "敏捷", "con": "体质", "int": "智力"})
+    roles: Dict[str, str] = field(default_factory=lambda: {"accuracy": "dex", "hp_growth": "con", "stamina_pool": "int"})
+    equip_slots: Dict[str, str] = field(default_factory=lambda: {"weapon": "主手", "armor": "护甲", "accessory": "饰品", "boots": "鞋"})
+    level_curve: str = "quadratic"
+    attr_per_level: int = 2      # 每升一级给的可分配属性点数
+
+
+def exp_to_reach(level: int) -> int:
+    """升级所需经验: 50*(L-1)*L → L2=100, L3=300, L4=600, ..."""
+    if level <= 1:
+        return 0
+    return 50 * (level - 1) * level
+
+
+HP_PER_LEVEL = 5       # 每级 max_hp 基础成长
+HP_PER_HPGROWTH = 2    # hp_growth 属性每点额外 +N max_hp 成长
+
+CHAR_XP_BY_ARCHETYPE = {
+    "brute_low": 30,
+    "brute_mid": 60,
+    "scout": 40,
+    "caster_low": 50,
+    "caster_mid": 80,
+    "boss": 200,
+}
 
 
 # ── 路线九：Modifier / Skill / Buff 数学系统 ──────────────────────
 
 MODIFIER_OPS = {"add", "mul", "set", "clamp", "advantage", "disadvantage", "reroll"}
-MODIFIER_TARGETS = {"roll", "dc", "damage", "hp", "gold", "narrative_tag"}
+MODIFIER_TARGETS = {"roll", "dc", "damage", "hp", "gold", "narrative_tag", "ac"}
 MODIFIER_VISIBILITY = {"full", "result", "hidden"}
 MODIFIER_OP_PRIORITY = ["clamp", "set", "mul", "add", "advantage", "disadvantage", "reroll"]
 
@@ -634,6 +705,7 @@ class Combatant:
     stamina: int = 0
     max_stamina: int = 0
     is_dead: bool = False
+    archetype: str = ""             # 来源原型，用于击败后按 CHAR_XP_BY_ARCHETYPE 给经验
 
 
 @dataclass

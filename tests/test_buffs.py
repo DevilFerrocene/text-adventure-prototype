@@ -75,7 +75,7 @@ class BuffEngineTest(unittest.TestCase):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="撬锁", sides=20)
         self.assertEqual(rolled["raw"], 10)
-        self.assertEqual(rolled["total"], 13)
+        self.assertEqual(rolled["total"], 16)  # 10 + 3(on_check buff) + 3(敏)
 
     # ── turn_end hp buff 直接改 hp + 回合过期 ─────────────────────
 

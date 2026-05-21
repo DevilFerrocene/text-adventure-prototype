@@ -28,7 +28,7 @@ class UseSkillTest(unittest.TestCase):
         # 挂上的 "隐入暗处" buff 让潜行检定 +5
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="潜行穿过院子", sides=20)
-        self.assertEqual(rolled["total"], 15)  # 10 + 5
+        self.assertEqual(rolled["total"], 18)  # 10 + 5(隐入暗处buff) + 3(敏)
 
     def test_narrative_tag_step_adds_condition(self):
         mcp_server.use_skill("stealth_art")

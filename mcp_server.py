@@ -42,7 +42,7 @@ from core.types import (
     Combatant, Encounter, CombatEvent, EnemyTemplate,
     Clue, DialogueEntry, RoomSnapshot,
     Buff, BuffTick, GameObject,
-    Skill, ActiveSkill, ReactiveSkill, Step,
+    Skill, ActiveSkill, ReactiveSkill, Step, RuleBook,
     SKILL_STEP_VERBS, SKILL_TRIGGERS,
     is_damageable, is_buff_bearer, is_actor,
     BUFF_POLARITIES, BUFF_TICK_TIMINGS,
@@ -53,6 +53,7 @@ from core.types import (
     ITEM_KIND_DEFS, ITEM_NAMED_TAG_DEFS, ITEM_MODIFIER_DEFS,
     MODIFIER_OPS, MODIFIER_TARGETS, MODIFIER_VISIBILITY, MODIFIER_OP_PRIORITY,
     ENEMY_ARCHETYPES, COMBAT_BEHAVIOR_PROFILES, COMBAT_DAMAGE_EXPRS_WHITELIST, COMBAT_SIDES,
+    exp_to_reach, HP_PER_LEVEL, HP_PER_HPGROWTH, CHAR_XP_BY_ARCHETYPE,
 )
 from runtime.game_world import GameWorld
 import content.yanan as yanan_module
@@ -273,6 +274,10 @@ def _vitals_snapshot(vitals: VitalStats) -> dict:
         "stamina": vitals.stamina,
         "max_stamina": vitals.max_stamina,
         "damage_types_resist": vitals.damage_types_resist,
+        "level": vitals.level,
+        "exp": vitals.exp,
+        "attributes": vitals.attributes,
+        "pending_attr_points": vitals.pending_attr_points,
     }
 
 
@@ -471,6 +476,7 @@ def _build_hud(state: GameState, world: GameWorld) -> str:
     wt = state.world_time
     room = world.get_room(state.position)
     room_name = room.name if room else state.position
+    rulebook = world.rulebook if hasattr(world, "rulebook") else None
 
     phase = _PHASE_LABELS.get(wt.phase, wt.phase)
     weather = _WEATHER_LABELS.get(wt.weather, wt.weather)
@@ -482,6 +488,27 @@ def _build_hud(state: GameState, world: GameWorld) -> str:
     parts.append(f"{phase}·{weather} {_fmt_clock(wt.minute)}")
     parts.append(f"📍 {room_name}")
     line = "  ".join(parts)
+
+    # RPG 等级/经验（§11）
+    if v.level > 1 or v.exp > 0:
+        next_xp = exp_to_reach(v.level + 1)
+        line += f"\n⭐ Lv.{v.level}  EXP {v.exp}/{next_xp}"
+    if v.pending_attr_points > 0:
+        line += f"  🔺属性点 ×{v.pending_attr_points}"
+
+    # 装备槽（§11）
+    if state.equipped and rulebook:
+        equip_parts = []
+        for slot, slot_label in rulebook.equip_slots.items():
+            item_id = state.equipped.get(slot, "")
+            if item_id:
+                item = state.get_item(item_id)
+                label = item.name if item else "-"
+            else:
+                label = "-"
+            equip_parts.append(f"{slot_label}:{label}")
+        if equip_parts:
+            line += "\n⚔️ " + " | ".join(equip_parts)
 
     # 当前任务阶段（取第一条进行中的）
     if state.quest_log:
@@ -630,10 +657,20 @@ def _validate_improvised(raw_items: list, state: GameState) -> Tuple[List[Improv
     return accepted, reasons
 
 
-def _apply_effect(effect: dict, state: GameState, world: GameWorld) -> dict:
-    """Apply an affordance effect dict, return summary of changes."""
+def _apply_effect(effect: dict, state: GameState, world: GameWorld) -> dict | None:
+    """Apply an affordance effect dict, return summary of changes.
+
+    Returns None if a cost requirement is not met (caller should treat as failure).
+    """
+    # cost_gold：扣钱检查，不足则拒绝整个效果
+    cost_gold = effect.get("cost_gold", 0)
+    if cost_gold > 0:
+        if state.vitals.gold < cost_gold:
+            return None
+        state.vitals.gold -= cost_gold
+
     applied: dict = {"flags_set": {}, "clues_added": [], "items_removed": [], "revealed": [],
-                     "skills_learned": []}
+                     "skills_learned": [], "gold_spent": cost_gold}
     room = world.get_room(state.position)
 
     if "unlock_exit" in effect and room:
@@ -704,6 +741,10 @@ def start_game(world: str = "yanan") -> dict:
                 stamina=getattr(new_world.initial_state.vitals, 'stamina', 0),
                 max_stamina=getattr(new_world.initial_state.vitals, 'max_stamina', 0),
                 damage_types_resist=getattr(new_world.initial_state.vitals, 'damage_types_resist', {}),
+                level=getattr(new_world.initial_state.vitals, 'level', 1),
+                exp=getattr(new_world.initial_state.vitals, 'exp', 0),
+                attributes=getattr(new_world.initial_state.vitals, 'attributes', {}).copy(),
+                pending_attr_points=getattr(new_world.initial_state.vitals, 'pending_attr_points', 0),
             ),
             conditions=list(new_world.initial_state.conditions),
             relationships=dict(new_world.initial_state.relationships),
@@ -730,6 +771,7 @@ def start_game(world: str = "yanan") -> dict:
             world_attrs=_clean_custom_attributes(new_world.initial_state.world_attrs),
             # 初始技能（出身自带）：深拷贝，使成长状态独立于 content 模板
             skills=[_clone_skill(s) for s in new_world.initial_state.skills],
+            equipped=dict(getattr(new_world.initial_state, 'equipped', {})),
         )
         if new_world.initial_state
         else GameState(position=list(new_world.rooms.keys())[0])
@@ -756,6 +798,33 @@ def start_game(world: str = "yanan") -> dict:
             "然后写一段沉浸式叙事给玩家。世界观约束见 world_canon 字段。"
         ),
     }
+
+
+@mcp.tool()
+def reset_game(world: str = "") -> dict:
+    """重置整个游戏：清空自动存档 + 开一局全新游戏。
+
+    用于玩家想从头重开。**手动存档槽（save_game 存的）保留**，仍可 load_game 找回——
+    只清自动存档，避免下次启动又恢复到旧进度。
+
+    Args:
+        world: 重开哪个世界。空=沿用当前世界（无进行中游戏则默认 yanan）。
+    """
+    # 1. 决定目标世界（先校验，避免无效世界时已删档）
+    target = world or (SESSION.world_name if SESSION.started else "yanan")
+    if target not in WORLDS:
+        return {"ok": False, "error": f"未知世界 {target!r}，可用: {list(WORLDS.keys())}"}
+
+    # 2. 清自动存档（手动存档槽不动）
+    try:
+        (SAVE_DIR / f"{AUTOSAVE_SLOT}.json").unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    # 3. 开新局（start_game 重建 SESSION 并立即写一份全新 autosave）
+    result = start_game(target)
+    result["reset"] = True
+    return result
 
 
 @mcp.tool()
@@ -941,7 +1010,8 @@ def _apply_hp_delta(bearer, m: Modifier):
 # GameObject——两者 hp/max_hp/damage_types_resist 字段同形，故同一函数通吃。
 
 def _resolve_damage(bearer, raw_dmg: int, dmg_type: str,
-                    match_context: dict | None = None) -> dict:
+                    match_context: dict | None = None,
+                    scaling: dict | None = None) -> dict:
     """对一个 Damageable bearer 结算一次伤害。
 
     流程：raw → damage modifier(add/mul) → 抗性(damage_types_resist) → 扣 hp。
@@ -949,6 +1019,7 @@ def _resolve_damage(bearer, raw_dmg: int, dmg_type: str,
     由调用方按 bearer 类型分派）。
 
     match_context 给 damage modifier 的 selector 用（如 reason_includes）。
+    scaling (§11 R2): 动作的属性加成声明，如 {"str":1.0,"dex":0.5}，按权重投 damage 修正。
     """
     match_context = match_context or {}
 
@@ -961,6 +1032,10 @@ def _resolve_damage(bearer, raw_dmg: int, dmg_type: str,
         for m in _emit_buff_modifiers(SESSION.state, "on_check") + _emit_skill_passive_modifiers(SESSION.state):
             if m.target == "damage" and _match_selector(m.selector, match_context):
                 dmg_mods.append(m)
+        # §11 R2：属性 scaling → damage Modifier
+        attr_dmg_mods = _emit_attribute_modifiers(SESSION.state, scaling=scaling,
+                                                   rulebook=SESSION.world.rulebook)
+        dmg_mods.extend([m for m in attr_dmg_mods if m.target == "damage"])
 
     dmg_total = raw_dmg
     for m in dmg_mods:
@@ -1003,6 +1078,8 @@ def _run_on_destroyed(obj: "GameObject", state: GameState, world: GameWorld) -> 
     for step in obj.on_destroyed:
         if isinstance(step, dict):
             applied = _apply_effect(step, state, world)
+            if applied is None:
+                continue  # cost_gold 不足，跳过此步
             # 合并各 step 的产出
             outcome["effects"].setdefault("flags_set", {}).update(applied.get("flags_set", {}))
             outcome["effects"].setdefault("clues_added", []).extend(applied.get("clues_added", []))
@@ -1098,6 +1175,71 @@ def _emit_skill_passive_modifiers(state: GameState) -> List[Modifier]:
                 reason=mod.reason or f"{skill.name}（被动）",
                 visible=mod.visible,
             ))
+    return result
+
+
+def _effective_attributes(state: GameState) -> dict:
+    """计算有效属性 = 基础属性 + 装备 attr_bonus 叠加（副本，不改本体）。"""
+    attrs = dict(state.vitals.attributes)
+    for slot, item_id in state.equipped.items():
+        item = state.get_item(item_id)
+        if item and item.attr_bonus:
+            for ak, bonus in item.attr_bonus.items():
+                attrs[ak] = attrs.get(ak, 0) + bonus
+    return attrs
+
+
+def _emit_attribute_modifiers(state: GameState, scaling: dict | None = None,
+                              rulebook: RuleBook | None = None) -> List[Modifier]:
+    """§11 R2：根据 RuleBook roles + 动作 scaling，把属性值投影为 Modifier 列表。
+
+    两条路：
+    1. role 锚点: accuracy → roll Modifier（命中加值），按 floor(属性值)
+    2. 动作 scaling: 武器/技能声明的属性 → damage Modifier（伤害加值），
+       按 floor(属性值 × 权重)
+
+    属性值存在 VitalStats.attributes。投影是纯函数，不入存档（载入时重新投）。
+    不修改属性本体。装备 attr_bonus 叠加到有效属性副本后投影。
+    """
+    rulebook = rulebook or RuleBook()
+    attrs = _effective_attributes(state)
+    result: List[Modifier] = []
+
+    # 路 1：role 锚点（accuracy → roll）
+    accuracy_attr = rulebook.roles.get("accuracy", "")
+    if accuracy_attr and accuracy_attr in attrs:
+        val = int(attrs[accuracy_attr])
+        if val != 0:
+            result.append(Modifier(
+                id=f"attr_accuracy_{accuracy_attr}",
+                source_kind="attribute",
+                source_id=accuracy_attr,
+                target="roll",
+                selector={},
+                op="add",
+                value=val,
+                reason=f"{rulebook.attributes.get(accuracy_attr, accuracy_attr)}+{val}",
+                visible="full",
+            ))
+
+    # 路 2：动作 scaling（damage）
+    if scaling:
+        for attr_key, weight in scaling.items():
+            if attr_key in attrs:
+                val = int(attrs[attr_key] * weight)
+                if val != 0:
+                    result.append(Modifier(
+                        id=f"attr_scaling_{attr_key}",
+                        source_kind="attribute",
+                        source_id=attr_key,
+                        target="damage",
+                        selector={},
+                        op="add",
+                        value=val,
+                        reason=f"{rulebook.attributes.get(attr_key, attr_key)}+{val}",
+                        visible="full",
+                    ))
+
     return result
 
 
@@ -1421,6 +1563,8 @@ def call_affordance(object_id: str, verb: str) -> dict:
 
     # Apply effect
     changes = _apply_effect(aff.effect, state, world)
+    if changes is None:
+        return {"ok": False, "error": f"金币不足（需要 {aff.effect.get('cost_gold', 0)}，当前 {state.vitals.gold}）"}
 
     # Start combat if effect specifies it
     combat_started = None
@@ -1603,7 +1747,9 @@ def roll_check(reason: str, sides: int = 20, modifier: int = 0, dc: Optional[int
     on_check_mods = _emit_buff_modifiers(SESSION.state, "on_check")
     # ── Phase 3：skill passive_modifiers 作为一次性 modifier（掌握期间常驻）──
     passive_mods = _emit_skill_passive_modifiers(SESSION.state)
-    extra_mods = on_check_mods + passive_mods
+    # ── §11 R2：属性→Modifier 投影（accuracy role → roll）──
+    attr_mods = _emit_attribute_modifiers(SESSION.state, rulebook=SESSION.world.rulebook)
+    extra_mods = on_check_mods + passive_mods + attr_mods
 
     match_context = {"reason": reason}
     raw = random.randint(1, sides)
@@ -2013,6 +2159,67 @@ def _skill_snapshot(skill: Skill) -> dict:
 
 
 @mcp.tool()
+def inspect_skill(skill_id: str) -> dict:
+    """查看一个技能的完整效果——GM 用它了解技能干什么，不必翻源码。
+
+    返回 passive 加值（target/op/value/selector）、active（cost/cooldown/recipe 步骤）、
+    reactive（trigger/condition/recipe）、rank/xp。优先查玩家已掌握的；未掌握则查世界模板。
+
+    Args:
+        skill_id: 技能 id
+    """
+    if err := _require_started():
+        return err
+
+    world, state = SESSION.world, SESSION.state
+    skill = _get_skill(state, skill_id) or world.get_skill(skill_id)
+    if not skill:
+        available = list((world.skills or {}).keys())
+        return {"ok": False, "error": f"未知技能 {skill_id!r}。可用: {available}"}
+
+    learned = _get_skill(state, skill_id) is not None
+
+    passives = [
+        {"target": m.target, "op": m.op, "value": m.value,
+         "selector": m.selector, "reason": m.reason, "visible": m.visible}
+        for m in skill.passive_modifiers
+    ]
+
+    def _recipe_brief(recipe):
+        return [{"verb": s.verb, "args": s.args} for s in recipe]
+
+    active = None
+    if skill.active:
+        active = {
+            "cost": skill.active.cost,
+            "cooldown": skill.active.cooldown,
+            "remaining_cooldown": skill.active.remaining_cooldown,
+            "recipe": _recipe_brief(skill.active.recipe),
+        }
+    reactive = None
+    if skill.reactive:
+        reactive = {
+            "trigger": skill.reactive.trigger,
+            "condition": skill.reactive.condition,
+            "recipe": _recipe_brief(skill.reactive.recipe),
+        }
+
+    return {
+        "ok": True,
+        "id": skill.id,
+        "name": skill.name,
+        "desc": skill.desc,
+        "learned": learned,
+        "rank": skill.rank,
+        "xp": skill.xp,
+        "rank_thresholds": skill.rank_thresholds,
+        "passive_modifiers": passives,
+        "active": active,
+        "reactive": reactive,
+    }
+
+
+@mcp.tool()
 def learn_skill(skill_id: str) -> dict:
     """玩家习得一个 content 中预定义的技能（从世界 SKILLS 注册表取）。
 
@@ -2166,19 +2373,31 @@ def _roll_damage(expression: str) -> int:
 
 
 def _build_player_combatant(state: GameState) -> Combatant:
-    """从 GameState 投影玩家 Combatant。"""
+    """从 GameState 投影玩家 Combatant。§11 R3：合并装备 AC 和 resist。"""
     player_ac = state.vitals.ac
     # Check for armor modifiers in pool
-    ac_mods = _collect_for_target("ac", {"reason": "combat"})
+    ac_mods = _collect_for_target("ac", {})
     for m in ac_mods:
         if m.op == "add":
             player_ac += int(m.value)
+        elif m.op == "set":
+            player_ac = int(m.value)
+
+    # 合并装备 resist
+    combined_resist = dict(state.vitals.damage_types_resist)
+    for slot, item_id in state.equipped.items():
+        item = state.get_item(item_id)
+        if item and item.resist:
+            for dtype, val in item.resist.items():
+                existing = combined_resist.get(dtype, 1.0)
+                combined_resist[dtype] = existing * val  # 叠乘
+
     return Combatant(
         id="player", name=state.profile.name, side="player",
         hp=state.vitals.hp, max_hp=state.vitals.max_hp,
         ac=player_ac, speed=state.vitals.speed,
         damage_expr="1d4", damage_type="blunt",
-        damage_types_resist=dict(state.vitals.damage_types_resist),
+        damage_types_resist=combined_resist,
         stamina=state.vitals.stamina, max_stamina=state.vitals.max_stamina,
     )
 
@@ -2195,6 +2414,7 @@ def _build_enemy_from_template(tmpl: EnemyTemplate, suffix: str = "") -> Combata
         damage_types_resist=dict(tmpl.damage_types_resist),
         behavior_profile=tmpl.behavior_profile,
         skills=list(tmpl.skills),
+        archetype=tmpl.archetype,
     )
 
 
@@ -2212,6 +2432,7 @@ def _build_enemy_from_archetype(name: str, archetype_key: str, suffix: str = "")
         ac=arch["ac"], speed=arch["speed"],
         damage_expr=arch["damage_expr"], damage_type=arch["damage_type"],
         behavior_profile=arch["behavior_profile"],
+        archetype=archetype_key,
     )
 
 
@@ -2432,6 +2653,102 @@ def request_combat(reason: str, canon: list[str] = None,
     return result
 
 
+# ── §11 R4：角色经验 / 升级循环 ──────────────────────────────────
+
+def _grant_char_exp_internal(state: GameState, amount: int, reason: str = "") -> dict:
+    """内部角色经验发放 + 升级检测。返回升级明细。"""
+    rulebook = SESSION.world.rulebook if hasattr(SESSION.world, "rulebook") else RuleBook()
+    hp_growth_attr = rulebook.roles.get("hp_growth", "con")
+    attrs = _effective_attributes(state)
+
+    state.vitals.exp += amount
+    events = []
+
+    while True:
+        next_level = state.vitals.level + 1
+        needed = exp_to_reach(next_level)
+        if state.vitals.exp < needed:
+            break
+        # Level up
+        state.vitals.level = next_level
+        hp_gain = HP_PER_LEVEL + HP_PER_HPGROWTH * attrs.get(hp_growth_attr, 0)
+        state.vitals.max_hp += hp_gain
+        state.vitals.hp = min(state.vitals.hp + hp_gain, state.vitals.max_hp)
+        # 奖励属性点
+        points = rulebook.attr_per_level
+        state.vitals.pending_attr_points += points
+        events.append({
+            "kind": "level_up",
+            "new_level": next_level,
+            "hp_gained": hp_gain,
+            "max_hp": state.vitals.max_hp,
+            "attr_points_gained": points,
+            "pending_attr_points": state.vitals.pending_attr_points,
+        })
+
+    return {
+        "xp_gained": amount,
+        "total_xp": state.vitals.exp,
+        "level": state.vitals.level,
+        "leveled_up": len(events) > 0,
+        "level_events": events,
+        "next_level_xp": exp_to_reach(state.vitals.level + 1),
+    }
+
+
+@mcp.tool()
+def grant_char_exp(amount: int, reason: str = "") -> dict:
+    """给玩家角色经验。跨过升级阈值自动升 level、涨 max_hp。
+
+    Args:
+        amount: 经验值（正整数）
+        reason: 来源说明（如"完成潜入任务"）
+    """
+    if err := _require_started():
+        return err
+    if amount <= 0:
+        return {"ok": False, "error": "amount 必须为正整数"}
+
+    result = _grant_char_exp_internal(SESSION.state, amount, reason)
+    result["ok"] = True
+    return result
+
+
+@mcp.tool()
+def allocate_attr(attr_key: str, points: int = 1) -> dict:
+    """将待分配属性点投入指定属性。
+
+    Args:
+        attr_key: 属性 key（如 "str"/"dex"/"con"/"int"，取决于该世界的 RuleBook）
+        points:  投入点数（正整数，默认 1）
+    """
+    if err := _require_started():
+        return err
+    state = SESSION.state
+    rulebook = SESSION.world.rulebook if hasattr(SESSION.world, "rulebook") else RuleBook()
+
+    if attr_key not in rulebook.attributes:
+        return {"ok": False, "error": f"无效属性 {attr_key!r}，该世界可用：{list(rulebook.attributes.keys())}"}
+    if points <= 0:
+        return {"ok": False, "error": "points 必须为正整数"}
+    if state.vitals.pending_attr_points < points:
+        return {"ok": False, "error": f"待分配属性点不足（需要 {points}，剩余 {state.vitals.pending_attr_points}）"}
+
+    state.vitals.pending_attr_points -= points
+    old_val = state.vitals.attributes.get(attr_key, 0)
+    state.vitals.attributes[attr_key] = old_val + points
+
+    return {
+        "ok": True,
+        "attr_key": attr_key,
+        "attr_name": rulebook.attributes[attr_key],
+        "old_value": old_val,
+        "new_value": state.vitals.attributes[attr_key],
+        "points_spent": points,
+        "pending_remaining": state.vitals.pending_attr_points,
+    }
+
+
 @mcp.tool()
 def end_combat(reason: str = "") -> dict:
     """结束当前战斗遭遇。
@@ -2456,21 +2773,30 @@ def end_combat(reason: str = "") -> dict:
         state.vitals.hp = max(0, player.hp)
         state.vitals.stamina = player.stamina
 
-    # Compute loot from dead enemies
+    # Compute loot and XP from dead enemies
     loot = []
     enemies_defeated = []
+    total_char_xp = 0
     for cid, c in enc.combatants.items():
         if c.side == "enemy" and c.is_dead:
             enemies_defeated.append({"id": cid, "name": c.name})
-            # Check if this came from a canon template
-            tmpl = SESSION.world.get_enemy(cid.replace("enemy_", "").rsplit("_", 1)[0])
-            # also check original ID format
+            # loot 仍从 canon 模板取（即兴敌人无 loot）
             for eid in (SESSION.world.enemies or {}):
                 if c.id.startswith(f"enemy_{eid}"):
                     tmpl = SESSION.world.get_enemy(eid)
                     if tmpl and tmpl.loot:
                         loot.extend(tmpl.loot)
                     break
+            # §11 R4：按 combatant 自带的 archetype 给角色经验
+            # （直接读 c.archetype——canon 和即兴敌人统一生效，不再反推 canon 模板）
+            if c.archetype:
+                total_char_xp += CHAR_XP_BY_ARCHETYPE.get(c.archetype, 0)
+
+    # §11 R4：结算角色经验
+    xp_result = None
+    if total_char_xp > 0:
+        xp_result = _grant_char_exp_internal(SESSION.state, total_char_xp,
+                                              f"击败 {len(enemies_defeated)} 个敌人")
 
     # Events log for narrative
     events = [
@@ -2486,6 +2812,8 @@ def end_combat(reason: str = "") -> dict:
         "player_max_hp": player.max_hp if player else 0,
         "enemies_defeated": enemies_defeated,
         "loot": loot,
+        "char_xp_gained": total_char_xp,
+        "char_level_up": xp_result.get("leveled_up", False) if xp_result else False,
         "events": events,
     }
 
@@ -2531,15 +2859,27 @@ def declare_intent(actor: str, intent: str, target: str = "",
         target_com = enc.combatants[target]
 
         damage_expr = combatant.damage_expr
-        # Use weapon if provided
-        if weapon and weapon != "":
-            # Check inventory for weapon item
-            item = SESSION.state.get_item(weapon)
-            if item and "damage" in item.tags:
-                for tag in item.tags:
-                    if tag.startswith("dmg:"):
-                        damage_expr = tag.split(":", 1)[1]
-                        break
+        dmg_type = combatant.damage_type
+        atk_scaling: dict | None = None
+        # Use weapon: explicit param → fallback to equipped weapon for player
+        weapon_id = weapon if weapon else ""
+        if not weapon_id and actor == "player":
+            weapon_id = SESSION.state.equipped.get("weapon", "")
+        if weapon_id:
+            item = SESSION.state.get_item(weapon_id)
+            if item:
+                # §11 R3：优先读结构化字段；回退读 "dmg:" tag（向后兼容）
+                if item.damage_expr:
+                    damage_expr = item.damage_expr
+                elif "damage" in item.tags:
+                    for tag in item.tags:
+                        if tag.startswith("dmg:"):
+                            damage_expr = tag.split(":", 1)[1]
+                            break
+                if item.damage_type and item.damage_type != "blunt":
+                    dmg_type = item.damage_type
+                if item.scaling:
+                    atk_scaling = item.scaling
 
         # Attack roll vs target AC
         atk_roll = roll_check(
@@ -2553,10 +2893,10 @@ def declare_intent(actor: str, intent: str, target: str = "",
             # Hit — roll damage, then resolve through the unified damage entry
             # (E3：探索/战斗共用 _resolve_damage，消除内联重复)
             dmg_raw = _roll_damage(damage_expr)
-            dmg_type = combatant.damage_type
             dmg = _resolve_damage(
                 target_com, dmg_raw, dmg_type,
                 {"reason": f"{combatant.name} 攻击 {target_com.name}"},
+                scaling=atk_scaling,
             )
             final_dmg = dmg["damage"]
 
@@ -2691,6 +3031,10 @@ def declare_intent(actor: str, intent: str, target: str = "",
             "encounter": snapshot,
             "next_actor": None,
             "end_combat_result": end_result,
+            # 顶层暴露经验/升级，GM 不必挖嵌套（击杀最后一敌即胜利结算）
+            "char_xp_gained": end_result.get("char_xp_gained", 0),
+            "char_level_up": end_result.get("char_level_up", False),
+            "loot": end_result.get("loot", []),
         }
 
     # Bump round if we wrapped around to first
@@ -3031,6 +3375,116 @@ def _apply_on_first_enter(world: GameWorld, state: GameState, room) -> bool:
     return True
 
 
+# ── §11 R3：装备系统 ────────────────────────────────────────
+
+def _emit_equipment_modifiers(state: GameState, rulebook: RuleBook) -> List[Modifier]:
+    """遍历已装备物品，投影装备 modifier 进池（source_kind="equipment"）。
+
+    - 护甲: defense → target="ac", op="add"（AC 加成）
+    - resist: → 暂缓（战斗时 via bearer.damage_types_resist，不在此处）
+    - 饰品/鞋: attr_bonus → 暂缓（返回 dict 供上层叠加到属性副本）
+    """
+    result: List[Modifier] = []
+    for slot, item_id in state.equipped.items():
+        item = state.get_item(item_id)
+        if not item:
+            continue
+        # 护甲 AC 加成
+        if item.defense > 0:
+            result.append(Modifier(
+                id=f"equip_{slot}_defense",
+                source_kind="equipment",
+                source_id=item_id,
+                target="ac",
+                selector={},
+                op="add",
+                value=item.defense,
+                reason=f"{item.name} AC+{item.defense}",
+                visible="full",
+            ))
+        # resist：merge 进去时做在 combatant 投影或 damage 结算前，这里只记 log
+        # attr_bonus：在需要属性值的调用点（_emit_attribute_modifiers）叠加副本
+    return result
+
+
+@mcp.tool()
+def equip(item_id: str) -> dict:
+    """装备背包中的物品到对应槽位。
+
+    Args:
+        item_id: 背包中物品的 id
+    """
+    if err := _require_started():
+        return err
+    state, world = SESSION.state, SESSION.world
+    rulebook = world.rulebook if hasattr(world, "rulebook") else RuleBook()
+
+    item = state.get_item(item_id)
+    if not item:
+        return {"ok": False, "error": f"背包中没有 {item_id!r}"}
+    slot = item.equip_slot
+    if not slot:
+        return {"ok": False, "error": f"{item.name} 不是可装备物品"}
+    if slot not in rulebook.equip_slots:
+        return {"ok": False, "error": f"无效装备槽 {slot!r}，可用：{list(rulebook.equip_slots.keys())}"}
+
+    # 如果该槽已有装备，先卸下
+    old_id = state.equipped.get(slot, "")
+    if old_id:
+        # 移除旧装备的 modifier
+        remove_modifier(source_kind="equipment", source_id=old_id)
+
+    # 装备新物品
+    state.equipped[slot] = item_id
+    # 投影装备 modifier 进池
+    for m in _emit_equipment_modifiers(state, rulebook):
+        SESSION.modifiers.append(m)
+
+    return {
+        "ok": True,
+        "slot": slot,
+        "slot_label": rulebook.equip_slots.get(slot, slot),
+        "item_id": item_id,
+        "item_name": item.name,
+        "defense": item.defense,
+        "damage_expr": item.damage_expr,
+        "replaced": old_id if old_id else "",
+    }
+
+
+@mcp.tool()
+def unequip(slot: str) -> dict:
+    """卸下指定装备槽的物品。
+
+    Args:
+        slot: 装备槽 key（如 "weapon" / "armor"）
+    """
+    if err := _require_started():
+        return err
+    state, world = SESSION.state, SESSION.world
+    rulebook = world.rulebook if hasattr(world, "rulebook") else RuleBook()
+
+    if slot not in rulebook.equip_slots:
+        return {"ok": False, "error": f"无效装备槽 {slot!r}，可用：{list(rulebook.equip_slots.keys())}"}
+
+    item_id = state.equipped.get(slot, "")
+    if not item_id:
+        return {"ok": False, "error": f"槽位 {slot} 没有装备"}
+
+    # 移除装备 modifier
+    remove_modifier(source_kind="equipment", source_id=item_id)
+    item = state.get_item(item_id)
+    state.equipped.pop(slot, None)
+
+    return {
+        "ok": True,
+        "slot": slot,
+        "slot_label": rulebook.equip_slots.get(slot, slot),
+        "item_id": item_id,
+        "item_name": item.name if item else item_id,
+    }
+
+
 @mcp.tool()
 def take_item(object_id: str) -> dict:
     """从场景中拾取物品放入背包。
@@ -3072,6 +3526,59 @@ def take_item(object_id: str) -> dict:
         "inventory": _inventory_snapshot(state),
         "expired_items": expired,
         "turn": state.turn,
+    }
+
+
+@mcp.tool()
+def use_item(item_id: str) -> dict:
+    """使用背包中的消耗品（回复药、药剂等），应用其 use_effect 并消耗。
+
+    use_effect 支持：heal(回 hp) / restore_sp(回 stamina) / cure(清除一个 condition)。
+    数值钳制到上限。用后物品从背包移除（一次性）。
+
+    Args:
+        item_id: 背包中消耗品的 id
+    """
+    if err := _require_started():
+        return err
+
+    state = SESSION.state
+    item = state.get_item(item_id)
+    if not item:
+        return {"ok": False, "error": f"背包中没有 {item_id!r}"}
+    if not item.use_effect:
+        return {"ok": False, "error": f"{item.name} 不是可使用的消耗品（无 use_effect）"}
+
+    v = state.vitals
+    applied = {}
+    eff = item.use_effect
+
+    if "heal" in eff:
+        before = v.hp
+        v.hp = min(v.max_hp, v.hp + int(eff["heal"]))
+        applied["healed"] = v.hp - before
+        applied["hp"] = f"{v.hp}/{v.max_hp}"
+    if "restore_sp" in eff:
+        before = v.stamina
+        v.stamina = min(v.max_stamina, v.stamina + int(eff["restore_sp"]))
+        applied["sp_restored"] = v.stamina - before
+        applied["stamina"] = f"{v.stamina}/{v.max_stamina}"
+    if "cure" in eff:
+        cond = eff["cure"]
+        if cond in state.conditions:
+            state.conditions.remove(cond)
+            applied["cured"] = cond
+
+    # 消耗物品
+    state.remove_item(item_id)
+    _autosave()
+
+    return {
+        "ok": True,
+        "used": item_id,
+        "name": item.name,
+        "effect": applied,
+        "hud": _build_hud(state, SESSION.world),
     }
 
 
@@ -3621,6 +4128,13 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
                 "kind": i.kind,
                 "named_tags": i.named_tags,
                 "modifiers": i.modifiers,
+                "equip_slot": i.equip_slot,
+                "damage_expr": i.damage_expr,
+                "damage_type": i.damage_type,
+                "scaling": i.scaling,
+                "defense": i.defense,
+                "resist": i.resist,
+                "attr_bonus": i.attr_bonus,
             }
             for i in state.inventory
         ],
@@ -3661,6 +4175,7 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
             for b in state.buffs
         ],
         "skills": [_serialize_skill(s) for s in state.skills],
+        "equipped": state.equipped,
         "player_attrs": state.player_attrs,
         "world_attrs": state.world_attrs,
     }
@@ -3723,6 +4238,13 @@ def _session_from_data(data: dict) -> Optional[Session]:
             kind=i.get("kind", "item"),
             named_tags=i.get("named_tags", []),
             modifiers=i.get("modifiers", []),
+            equip_slot=i.get("equip_slot", ""),
+            damage_expr=i.get("damage_expr", ""),
+            damage_type=i.get("damage_type", "blunt"),
+            scaling=i.get("scaling", {}),
+            defense=i.get("defense", 0),
+            resist=i.get("resist", {}),
+            attr_bonus=i.get("attr_bonus", {}),
         )
         for i in data.get("inventory", [])
     ]
@@ -3781,6 +4303,7 @@ def _session_from_data(data: dict) -> Optional[Session]:
         room_snapshots=room_snapshots,
         buffs=_load_buffs(data.get("buffs", [])),
         skills=_load_skills(data.get("skills", [])),
+        equipped=data.get("equipped", {}),
         player_attrs=_clean_custom_attributes(data.get("player_attrs", {})),
         world_attrs=_clean_custom_attributes(data.get("world_attrs", {})),
     )

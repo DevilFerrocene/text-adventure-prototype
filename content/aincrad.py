@@ -14,6 +14,7 @@ from core.types import (
     Room, GameObject, Affordance, GameState, WorldCanon, InventoryItem,
     ActorProfile, VitalStats, WorldTime, QuestEntry, EnemyTemplate,
     Skill, ActiveSkill, ReactiveSkill, Step, Modifier,
+    RuleBook,
 )
 from runtime.game_world import GameWorld
 
@@ -85,6 +86,34 @@ ENEMIES = {
             "只是缓慢地、笃定地朝你走来。弱点在炎属剑技。"
         ),
     ),
+    # 迷宫暗影虫
+    "shadow_lurker": EnemyTemplate(
+        id="shadow_lurker", name="影匿虫",
+        archetype="scout", hp=5, max_hp=5, ac=14, speed=14,
+        damage_expr="1d4", damage_type="pierce",
+        behavior_profile="opportunist", skills=[],
+        damage_types_resist={"lightning": 1.5, "slash": 0.5},  # 惧雷、刃物半伤
+        loot=["lurker_carapace"],
+        flavor=(
+            "巴掌大的甲虫伏在迷宫石壁阴影里，甲壳灰黑如青苔。独居时无害——"
+            "但三只以上会共振鸣翅，发出的高频脉冲能让攻略者眩晕三秒。"
+            "迷宫里的老手都有一条铁律：看见一只，先找另外两只。"
+        ),
+    ),
+    # 裂蹄殿守卫
+    "warden_bladeguard": EnemyTemplate(
+        id="warden_bladeguard", name="裂蹄殿守卫",
+        archetype="brute_mid", hp=10, max_hp=10, ac=12, speed=9,
+        damage_expr="1d8", damage_type="slash",
+        behavior_profile="aggressive", skills=[],
+        damage_types_resist={"fire": 0.5},
+        loot=["guard_crest"],
+        flavor=(
+            "身披锈铁胸甲的牛头战士，长柄战斧的斧刃上有暗褐色的旧渍——"
+            "那是之前叩门者的血。它不巡逻，只是站在首领殿前的甬道正中，像一座活雕像。"
+            "「打不倒它，就没资格见层守。」"
+        ),
+    ),
 }
 
 
@@ -139,6 +168,71 @@ SKILLS = {
         ),
         obtained_from="start:swordsman",
     ),
+    # 主动：炎刃斩 — 火属性剑技，扣 SP，打 1d8 fire + 挂燃烧
+    "flame_slash": Skill(
+        id="flame_slash", name="炎刃斩",
+        desc="将剑刃缠上回廊炎纹，劈出一道炽白斩线。",
+        active=ActiveSkill(
+            cost={"stamina": 4},
+            cooldown=3,
+            recipe=[
+                Step(verb="apply_buff", args={
+                    "name": "炎刃·灼烧", "desc": "每回合开始 -2hp",
+                    "polarity": "debuff", "target": "hp", "op": "add", "value": -2,
+                    "duration": 3, "timing": "turn_start",
+                    "reason": "炎刃灼烧", "visible": "full",
+                }),
+                Step(verb="narrative_tag", args={"tag": "炎刃之光"}),
+            ],
+        ),
+        obtained_from="npc:vera",
+    ),
+    # 主动：疾风步 — 自 buff speed+3
+    "wind_step": Skill(
+        id="wind_step", name="疾风步",
+        desc="以回廊烙印激发腿部刻印，三呼吸间身轻如燕。",
+        active=ActiveSkill(
+            cost={"stamina": 2},
+            cooldown=4,
+            recipe=[
+                Step(verb="apply_buff", args={
+                    "name": "疾风步", "desc": "speed +3，踩中后先手",
+                    "polarity": "buff", "target": "narrative_tag", "op": "add", "value": 3,
+                    "duration": 3, "timing": "on_check",
+                    "reason": "疾风步加速", "visible": "full",
+                }),
+                Step(verb="narrative_tag", args={"tag": "身形如风"}),
+            ],
+        ),
+        obtained_from="npc:vera",
+    ),
+    # 被动：铁壁 — AC +2
+    "iron_wall": Skill(
+        id="iron_wall", name="铁壁",
+        desc="将护甲挡在身前形成稳固防线，受击更难被命中。",
+        passive_modifiers=[
+            Modifier(
+                id="passive_ac", source_kind="skill", source_id="iron_wall",
+                target="ac",
+                selector={},
+                op="add", value=2, reason="铁壁", visible="full",
+            ),
+        ],
+        obtained_from="npc:vera",
+    ),
+    # 反应：死守 — hp≤3 时自动回 5
+    "death_ward": Skill(
+        id="death_ward", name="死守",
+        desc="烙印在濒死时迸发最后一缕回廊之力，将意识从深渊拉回。",
+        reactive=ReactiveSkill(
+            trigger="on_take_damage",
+            condition={},  # 任何受击都可能触发，但效果只在 hp 低时有意义
+            recipe=[
+                Step(verb="narrative_tag", args={"tag": "死守·烙印之光"}),
+            ],
+        ),
+        obtained_from="npc:vera",
+    ),
 }
 
 
@@ -146,6 +240,14 @@ def register(world: GameWorld):
     world.set_world_canon(SPIRE_CANON)
     world.register_enemies(ENEMIES)
     world.register_skills(SKILLS)
+
+    # §11：苍穹回廊 RuleBook（力敏体智）
+    world.rulebook = RuleBook(
+        attributes={"str": "力量", "dex": "敏捷", "con": "体质", "int": "智力"},
+        roles={"accuracy": "dex", "hp_growth": "con", "stamina_pool": "int"},
+        equip_slots={"weapon": "主手", "armor": "护甲", "accessory": "饰品", "boots": "鞋"},
+        level_curve="quadratic",
+    )
 
     # ── 第一层「雾语草原」房间链 ──────────────────────────────────
     # camp(安全区) → plains(刷怪) → labyrinth(迷宫) → warden_gate(首领)
@@ -161,7 +263,9 @@ def register(world: GameWorld):
             "这里是回廊的第一条不成文规则——「营地是安全的」。"
         ),
         exits={"north": "plains"},
-        objects=["weapon_rack", "teleport_crystal", "skill_trainer", "campfire"],
+        objects=["weapon_rack", "rack_iron_sword", "rack_dagger",
+                 "teleport_crystal", "skill_trainer", "campfire",
+                 "camp_merchant", "lost_scout"],
         area="苍穹回廊·第一层",
         zone="雾语草原·营地",
         coords=(0, 0),
@@ -179,7 +283,7 @@ def register(world: GameWorld):
             "空气里有青草、湿土和一种微弱的甜花香——那是雾语食人花的饵。"
         ),
         exits={"south": "camp", "north": "labyrinth"},
-        objects=["field_chest", "mist_shrine", "tall_grass"],
+        objects=["field_chest", "mist_shrine", "tall_grass", "erin_talisman", "mist_cave_entrance"],
         area="苍穹回廊·第一层",
         zone="雾语草原",
         coords=(0, 1),
@@ -205,7 +309,7 @@ def register(world: GameWorld):
         zone="雾语迷宫",
         coords=(0, 2),
         tags=["dungeon", "trap", "floor_1", "labyrinth"],
-        enemies=["gale_wolf"],
+        enemies=["gale_wolf", "shadow_lurker"],
     ))
 
     world.add_room(Room(
@@ -218,7 +322,7 @@ def register(world: GameWorld):
             "殿正中，层守在等。这里的空气比别处重，你听不见风声、听不见远处草原上的怪叫，"
             "只能听见自己的心跳和殿深处某种巨大、缓慢的呼吸。"
         ),
-        exits={"south": "labyrinth"},
+        exits={"south": "labyrinth", "north": "floor_2_gate"},
         # 击败首领后解锁的回廊门（上行）
         locked_exits={"north": "warden_defeated"},
         objects=["corridor_gate", "warden_arena"],
@@ -226,7 +330,45 @@ def register(world: GameWorld):
         zone="首领之间",
         coords=(0, 3),
         tags=["boss_room", "floor_1", "climax"],
-        enemies=["warden_gorehoof"],
+        enemies=["warden_bladeguard", "warden_gorehoof"],
+    ))
+
+    # 雾隐洞窟（草原隐藏分支）
+    world.add_room(Room(
+        id="mist_cave",
+        name="雾隐洞窟",
+        base_description=(
+            "草原西侧石壁上一个被藤蔓半掩的裂隙，窄到得侧身挤进去。里面意外地宽敞——"
+            "洞壁泛着微弱的青蓝色磷光，是从岩缝里渗出的某种发光菌。"
+            "空气阴凉湿黏，能听见深处有水滴规律地敲着石笋，像某种缓慢的心跳。"
+            "角落里堆着不知谁留下的补给箱，和一副散落的白骨——"
+            "他大概是进来躲怪，却撞上了洞里更糟的东西。"
+        ),
+        exits={"out": "plains"},
+        objects=["cave_chest", "cave_crystal"],
+        area="苍穹回廊·第一层",
+        zone="雾隐洞窟",
+        coords=(-1, 1),
+        tags=["hidden", "treasure", "floor_1"],
+    ))
+
+    # 第二层入口（击败层守后解锁）
+    world.add_room(Room(
+        id="floor_2_gate",
+        name="回廊门·第二层入口",
+        base_description=(
+            "石殿北端的巨门在你走近时无声滑开——没有机关，没有铰链，"
+            "仿佛它一直在等你。门后是一道螺旋上升的石梯，每一级台阶上都浮着微弱的蓝光，"
+            "那是历代登顶者留下的烙印残影。往上望不见尽头，往下……已没有回头的路。"
+            "第一层的雾气和野草味被一股干燥、带着金属气息的冷风取代。"
+            "第二层在等。传送水晶在这里立了一根新的——回廊承认了你的抵达。"
+        ),
+        exits={"up": ""},  # 第二层未做，预留
+        objects=["floor_2_crystal", "floor_2_marker"],
+        area="苍穹回廊·第二层入口",
+        zone="回廊门",
+        coords=(0, 4),
+        tags=["safe_zone", "transition", "floor_2"],
     ))
 
     # ── 营地物体 ──────────────────────────────────────────────────
@@ -241,6 +383,158 @@ def register(world: GameWorld):
         kind="container",
         traits=["equipment"],
         takable=False,
+        reveals_objects=["rack_iron_sword", "rack_dagger"],
+        affordances={
+            "take_sword": Affordance(
+                verb="take_sword",
+                desc="取下一柄制式铁剑",
+                effect={"reveals_objects": ["rack_iron_sword"],
+                        "clues": ["你从架上取下一柄铁剑，重心刚好，刃口微卷——是把见过风雨的旧剑。"]},
+            ),
+            "take_dagger": Affordance(
+                verb="take_dagger",
+                desc="取下猎杀匕首",
+                effect={"reveals_objects": ["rack_dagger"],
+                        "clues": ["匕首握在掌心，刃薄到能藏在腰带里。草原上的疾风狼不会给你挥大剑的时间。"]},
+            ),
+        },
+    ))
+
+    # ── 武器架上的隐藏武器（通过 affordance reveal 后可变 takable）──
+    world.add_object(GameObject(
+        id="rack_iron_sword",
+        name="制式铁剑",
+        description="营地板架上的制式铁剑，重心刚好，挥起来顺手。刃口有几处小卷刃——是把见过风雨的旧剑。",
+        kind="tool", hidden=True, takable=True,
+        traits=["weapon", "slash"],
+        equip_slot="weapon", damage_expr="1d6", damage_type="slash",
+        scaling={"str": 1.0},
+    ))
+    world.add_object(GameObject(
+        id="rack_dagger",
+        name="猎杀匕首",
+        description="柄缠细麻绳的短刃，刃薄到能藏在腰带里。营地的老手管它叫'狼牙签'——不是用来耍帅，是用来在疾风狼咬住你之前捅它喉咙。",
+        kind="tool", hidden=True, takable=True,
+        traits=["weapon", "pierce", "dex"],
+        equip_slot="weapon", damage_expr="1d4", damage_type="pierce",
+        scaling={"dex": 1.0},  # 匕首：纯敏，刺杀吃敏捷
+    ))
+
+    # ── 营地商人 ──
+    world.add_object(GameObject(
+        id="camp_merchant",
+        name="补给商·老马罗",
+        description=(
+            "一个五十出头的光头汉子，围着一条被各种液体染得看不出原色的围裙。"
+            "他经营营地的补给摊已经不知道多少年了——「比你们所有人的回廊烙印加起来还老。」"
+            "摊上摆着药水、磨刀石和几件从倒下的攻略者身上回收的装备。价格公道，童叟无欺——"
+            "毕竟死人的装备是无限供应的。"
+        ),
+        kind="npc",
+        named_tags=["merchant"],
+        traits=["shopkeeper", "veteran"],
+        takable=False,
+        affordances={
+            "buy_heal": Affordance(
+                verb="buy_heal",
+                desc="购买回复水晶（回 8 HP）— 50 金币",
+                effect={"cost_gold": 50,
+                        "clues": ["老马罗从摊下摸出一颗淡蓝色水晶，「用的时候捏碎——别咬，上个月有个笨蛋崩了门牙。」"]},
+            ),
+            "buy_sp": Affordance(
+                verb="buy_sp",
+                desc="购买战技灵药（回 5 SP）— 50 金币",
+                effect={"cost_gold": 50,
+                        "clues": ["他递过一支细颈瓶，里面液体是萤火虫的青色。「喝了能再放一剑技。别贪，一天最多两瓶。」"]},
+            ),
+            "buy_steel_blade": Affordance(
+                verb="buy_steel_blade",
+                desc="购买淬钢直剑（1d8 slash，力敏双修）— 200 金币",
+                effect={"cost_gold": 200,
+                        "clues": ["老马罗从摊下抽出一柄裹在油布里的直剑。刃面冷冽，比铁剑沉了一分，也狠了一分。"],
+                        "reveals_objects": ["shop_steel_blade"]},
+            ),
+            "buy_leather_vest": Affordance(
+                verb="buy_leather_vest",
+                desc="购买皮背心（AC+2）— 100 金币",
+                effect={"cost_gold": 100,
+                        "clues": ["他拎起一件鞣制过的雾牛皮背心，拍了拍前胸，「比看起来结实。挡野猪那一下够用了。」"],
+                        "reveals_objects": ["shop_leather_vest"]},
+            ),
+        },
+    ))
+    # 商店揭示的隐藏物品
+    world.add_object(GameObject(
+        id="shop_steel_blade",
+        name="淬钢直剑",
+        description="刃面冷冽的直剑，比制式铁剑沉一分。剑身上有锻打留下的水波纹——不是装饰，是叠层淬火的痕迹。",
+        kind="tool", hidden=True, takable=True,
+        traits=["weapon", "slash", "quality"],
+        # §11 结构化装备字段（比起始铁剑 1d6 强一档）
+        equip_slot="weapon",
+        damage_expr="1d8",
+        damage_type="slash",
+        scaling={"str": 1.0, "dex": 1.0},  # 直剑：力敏双修
+    ))
+    world.add_object(GameObject(
+        id="shop_leather_vest",
+        name="鞣制皮背心",
+        description="雾牛皮缝成的护胸，鞣得柔软但韧劲十足。一股干草和硝烟的味道。肩带可以调——上一任主人大概比你壮一圈。",
+        kind="item", hidden=True, takable=True,
+        traits=["armor"],
+        equip_slot="armor",
+        defense=3,
+    ))
+
+    # ── 迷途的攻略者 ──
+    world.add_object(GameObject(
+        id="lost_scout",
+        name="迷途的艾琳",
+        description=(
+            "一个看起来不到二十岁的少女攻略者，右眼下方有一道还很新的烙印——她进塔不到一周。"
+            "此刻坐在营火旁，膝盖抵着下巴，眼圈发红。她的侦查小队三天前进了迷宫，"
+            "只有她一个人逃了出来。她的护符——母亲给的进塔饯别礼——掉在草原了。"
+        ),
+        kind="npc",
+        named_tags=["scout", "quest_giver"],
+        traits=["young", "distressed"],
+        takable=False,
+        affordances={
+            "ask_about_talisman": Affordance(
+                verb="ask_about_talisman",
+                desc="问她为什么难过",
+                effect={
+                    "flags": {"met_lost_scout": True},
+                    "clues": [
+                        "艾琳抬起头，用袖子擦了一下眼角。「我的护符——一颗雾语青石坠子——"
+                        "掉在草原了。那是妈妈给我的……你能帮我找回来吗？它大概在草原北边的草丛里。」"
+                        "她顿了顿，「找到了的话，我把我的匕首给你。它是敏系，比铁剑更适合对付疾风狼。」"
+                    ],
+                },
+            ),
+            "return_talisman": Affordance(
+                verb="return_talisman",
+                desc="把雾语护符还给艾琳",
+                requires_item="erin_talisman",
+                effect={
+                    "flags": {"erin_talisman_returned": True},
+                    "clues": [
+                        "艾琳双手接过护符，贴在额头，半天没说话。"
+                        "然后她解下腰间的匕首，递给你。「它叫'狼牙签'。拿着吧——你比我更需要它。」"
+                    ],
+                    "reveals_objects": ["erin_dagger_reward"],
+                },
+            ),
+        },
+    ))
+    world.add_object(GameObject(
+        id="erin_dagger_reward",
+        name="艾琳的匕首",
+        description="一柄纤细的猎刀，柄上缠着褪色的蓝丝线。刃短但极利——艾琳说它捅穿过三只疾风狼的喉咙。",
+        kind="tool", hidden=True, takable=True,
+        traits=["weapon", "pierce", "dex", "quest_reward"],
+        equip_slot="weapon", damage_expr="1d4+1", damage_type="pierce",
+        scaling={"dex": 1.0},  # 精良匕首：纯敏
     ))
 
     world.add_object(GameObject(
@@ -393,6 +687,32 @@ def register(world: GameWorld):
         }],
     ))
 
+    # ── 平原支线物品 ──
+    world.add_object(GameObject(
+        id="erin_talisman",
+        name="雾语青石坠子",
+        description="一颗拇指大的青色石子，穿了皮绳。石面上刻着一道简易的螺旋——回廊烙印的民间摹本。握在手心微微发暖，像是被谁攥了很久。这是艾琳的护符。",
+        kind="item", hidden=True, takable=True,
+        traits=["quest_item"],
+        named_tags=["quest_item", "evidence"],
+    ))
+    world.add_object(GameObject(
+        id="mist_cave_entrance",
+        name="石壁裂隙",
+        description="草原西侧石壁上被藤蔓半掩的窄缝。若非走近细看，很容易当成阴影忽略。风从缝里灌出来时带着一股发光的菌丝味——这股味道在雾语草原别处没有。",
+        kind="scenery",
+        traits=["hidden", "entrance"],
+        takable=False,
+        affordances={
+            "enter": Affordance(
+                verb="enter",
+                desc="侧身挤进裂隙",
+                effect={"clues": ["你侧身挤过藤蔓，洞口初窄如咽喉，三步后豁然开朗——是一座发着青蓝磷光的天然洞窟。"],
+                        "flags": {"mist_cave_found": True}},
+            ),
+        },
+    ))
+
     # ── 迷宫物体 ──────────────────────────────────────────────────
     world.add_object(GameObject(
         id="rune_door",
@@ -541,6 +861,87 @@ def register(world: GameWorld):
         # 解锁 north 出口，通往第二层（暂未实现，留作 floor_2 钩子）。
     ))
 
+    # ── 雾隐洞窟物体 ──
+    world.add_object(GameObject(
+        id="cave_chest",
+        name="旧补给箱",
+        description="一口被潮气啃得边角发黑的木箱，锁扣早已锈烂。盖上用炭笔潦草地写着「给后来的倒霉蛋——别碰洞底那东西」。",
+        kind="container",
+        traits=["treasure"],
+        takable=False,
+        reveals_objects=["cave_glow_staff", "cave_heal_crystal"],
+        affordances={
+            "open": Affordance(
+                verb="open",
+                desc="撬开锈蚀的箱盖",
+                effect={"reveals_objects": ["cave_glow_staff", "cave_heal_crystal"],
+                        "clues": ["箱盖嘎吱掀开，潮气裹着霉味扑面。里面躺着一根石质短杖和一颗淡蓝色水晶——前人留给后来者的保险。"]},
+            ),
+        },
+    ))
+    world.add_object(GameObject(
+        id="cave_glow_staff",
+        name="辉石杖",
+        description="一根由发光洞壁凿下的石杖，杖头嵌着一颗不灭的青色辉石。握在手里能感到轻微的魔力脉动——它不是武器，是法器。智为主、力为辅。",
+        kind="tool", hidden=True, takable=True,
+        traits=["weapon", "arcane", "quality"],
+        equip_slot="weapon", damage_expr="1d6", damage_type="arcane",
+        scaling={"int": 1.0, "str": 0.5},  # 辉石杖：智为主、力为辅（混属性带权重）
+    ))
+    world.add_object(GameObject(
+        id="cave_heal_crystal",
+        name="回复水晶",
+        description="一颗淡蓝色水晶，表面浮着脉搏般的光纹。捏碎后回廊之力会涌入体内，加速伤口愈合。",
+        kind="consumable", hidden=True, takable=True,
+        traits=["consumable", "heal"],
+        use_effect={"heal": 12},  # 消耗品：回 12 hp
+    ))
+    world.add_object(GameObject(
+        id="cave_crystal",
+        name="洞壁晶簇",
+        description="洞壁上一簇自发光的青蓝色晶簇，光芒随呼吸般明灭。靠近时能感到微弱的暖意——这是回廊的天然魔力矿脉。",
+        kind="scenery",
+        traits=["magic_source"],
+        takable=False,
+        affordances={
+            "attune": Affordance(
+                verb="attune",
+                desc="伸手触摸晶簇，感应魔力",
+                effect={"clues": ["指尖触到晶簇的瞬间，一股暖流顺手臂窜上烙印。"
+                                    "你感到体内的回廊之力涨了一截——魔力池+5 stamina。"],
+                        "flags": {"cave_attuned": True}},
+            ),
+        },
+    ))
+
+    # ── 第二层入口物体 ──
+    world.add_object(GameObject(
+        id="floor_2_crystal",
+        name="第二层·传送水晶",
+        description="一根全新的蓝色水晶柱，表面还没有任何划痕。回廊在你击败层守后生成了它——这是新的存档点，也是第一层的句号。",
+        kind="scenery",
+        traits=["save_point", "new_floor"],
+        takable=False,
+        affordances={
+            "attune": Affordance(
+                verb="attune",
+                desc="将手按上水晶，激活第二层烙印",
+                effect={"flags": {"floor_2_attuned": True},
+                        "clues": ["水晶在你掌心下亮起——这一次没有低语，只有一种沉默的确认。"
+                                    "回廊承认了你的第一层攻略。烙印上多了一道细不可见的刻痕。"],
+                        "unlock_exit": "up"},
+            ),
+        },
+    ))
+    world.add_object(GameObject(
+        id="floor_2_marker",
+        name="螺旋阶梯铭牌",
+        description="立在阶梯入口旁的石刻铭牌，上面刻着：「苍穹回廊·第二层·炎砾荒原」。下面用小字刻着一行前人留的警示：'带水。真的，带水。'",
+        kind="scenery",
+        traits=["lore"],
+        takable=False,
+    ))
+
     # ── 初始状态 ──────────────────────────────────────────────────
     world.initial_state = GameState(
         position="camp",
@@ -552,10 +953,35 @@ def register(world: GameWorld):
                 "刃口已有几处细小卷刃，但重心刚好，挥起来顺手。"
                 "这是你在回廊里的第一把剑，也许也是最后一把。"
             ),
-            tags=["武器", "damage", "dmg:1d6"],
+            tags=["武器", "damage", "dmg:1d6"],  # 旧 tag 保留向后兼容
             kind="tool",
             named_tags=["weapon"],
             modifiers=[],
+            # §11 结构化装备字段
+            equip_slot="weapon",
+            damage_expr="1d6",
+            damage_type="slash",
+            scaling={"str": 1.0, "dex": 1.0},  # 直剑：力敏双修
+            defense=0,
+        ),
+        InventoryItem(
+            id="leather_vest",
+            name="皮背心",
+            desc="鞣制过的雾牛皮缝成的护胸，比看起来要结实。一股干草和硝烟的味道。",
+            tags=["防具"],
+            kind="item",
+            equip_slot="armor",
+            defense=2,
+            resist={},
+        ),
+        InventoryItem(
+            id="heal_crystal",
+            name="回复水晶",
+            desc="淡蓝色水晶，捏碎后回廊之力涌入体内，愈合伤口。",
+            tags=["消耗品", "回复"],
+            kind="consumable",
+            named_tags=[],
+            use_effect={"heal": 12},
         )],
         flags={},
         alertness=0,
@@ -575,6 +1001,9 @@ def register(world: GameWorld):
             speed=11,
             stamina=10,       # SP
             max_stamina=10,
+            level=1,
+            exp=0,
+            attributes={"str": 3, "dex": 4, "con": 3, "int": 2},
         ),
         # 出身自带技能（start:swordsman）：单手剑精通(被动) + 危机回避(反应)。
         # start_game 会深拷贝，玩家成长状态独立于模板。
@@ -582,6 +1011,8 @@ def register(world: GameWorld):
         conditions=[],
         relationships={
             "skill_trainer": "mentor",
+            "camp_merchant": "shopkeeper",
+            "lost_scout": "fellow_survivor",
             "warden_gorehoof": "floor_1_boss",
         },
         world_time=WorldTime(
@@ -613,6 +1044,38 @@ def register(world: GameWorld):
                     "层守的攻击规律",
                     "登顶后的「一愿」是否真实",
                 ],
-            )
+            ),
+            QuestEntry(
+                id="lost_talisman",
+                title="迷途护符",
+                stage="available",
+                summary="艾琳的雾语青石护符掉在草原了。找到它，她会把自己的猎杀匕首送给你。",
+                deadline="",
+                known_facts=[
+                    "艾琳是刚进塔不到一周的新手攻略者",
+                    "护符是母亲给的进塔饯别礼，对她意义重大",
+                    "护符大概掉在草原北边的草丛里",
+                    "回报是她的猎杀匕首——纯敏捷，对付疾风狼有奇效",
+                ],
+                unresolved=[
+                    "护符的具体位置",
+                ],
+            ),
+            QuestEntry(
+                id="explore_mist_cave",
+                title="雾隐洞窟",
+                stage="available",
+                summary="草原西侧石壁上有一道被藤蔓掩住的裂隙。里面可能藏着前人留下的好东西——但也可能有危险。",
+                deadline="",
+                known_facts=[
+                    "裂隙在草原西侧石壁上，被藤蔓半掩",
+                    "风从缝里灌出来时带着发光的菌丝味",
+                    "补给箱上写着'别碰洞底那东西'的警告",
+                ],
+                unresolved=[
+                    "洞里有什么",
+                    "洞底'那东西'是什么",
+                ],
+            ),
         ],
     )

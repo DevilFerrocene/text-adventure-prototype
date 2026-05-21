@@ -113,5 +113,54 @@ class RestoreTest(unittest.TestCase):
         self.assertEqual(mcp_server.SESSION.world_name, "yanan")
 
 
+class ResetGameTest(unittest.TestCase):
+    """reset_game：清自动存档 + 开新局，手动存档保留。"""
+
+    def tearDown(self):
+        _clear_autosave()
+        for slot in ("reset_keep",):
+            p = SAVE_DIR / f"{slot}.json"
+            if p.exists():
+                p.unlink()
+
+    def test_reset_starts_fresh_same_world(self):
+        mcp_server.start_game("aincrad")
+        mcp_server.move("north")
+        mcp_server.SESSION.state.vitals.hp = 3
+        r = mcp_server.reset_game()
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["reset"])
+        self.assertEqual(mcp_server.SESSION.world_name, "aincrad")  # 沿用当前世界
+        self.assertEqual(mcp_server.SESSION.state.position, "camp")  # 回到起点
+        self.assertEqual(mcp_server.SESSION.state.vitals.hp, 20)     # 满血新局
+
+    def test_reset_keeps_manual_saves(self):
+        mcp_server.start_game("aincrad")
+        mcp_server.save_game("reset_keep")
+        mcp_server.reset_game()
+        # 手动存档仍可读回
+        loaded = mcp_server.load_game("reset_keep")
+        self.assertTrue(loaded["ok"])
+
+    def test_reset_clears_autosave_no_stale_restore(self):
+        mcp_server.start_game("aincrad")
+        mcp_server.move("north")  # plains
+        mcp_server.reset_game()
+        # reset 后 autosave 是新局(camp)，模拟重启不会回到 plains
+        _simulate_process_restart()
+        self.assertEqual(mcp_server.SESSION.state.position, "camp")
+
+    def test_reset_to_specified_world(self):
+        mcp_server.start_game("aincrad")
+        r = mcp_server.reset_game("yanan")
+        self.assertTrue(r["ok"])
+        self.assertEqual(mcp_server.SESSION.world_name, "yanan")
+
+    def test_reset_invalid_world_rejected(self):
+        mcp_server.start_game("aincrad")
+        r = mcp_server.reset_game("nonexistent")
+        self.assertFalse(r["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

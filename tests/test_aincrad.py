@@ -89,7 +89,7 @@ class SkillsTest(unittest.TestCase):
         mcp_server.SESSION.modifiers.clear()
         with patch("mcp_server.random.randint", return_value=10):
             rc = mcp_server.roll_check(reason="挥砍攻击", sides=20)
-        self.assertEqual(rc["total"], 12)  # 10 + 2(自带精通)
+        self.assertEqual(rc["total"], 16)  # 10 + 2(自带精通) + 4(敏)
 
     def test_npc_teaches_skill_into_state(self):
         # 营地教官教学：真进 state.skills，不只是置 flag
@@ -112,7 +112,7 @@ class SkillsTest(unittest.TestCase):
         mcp_server.learn_skill("sword_mastery")
         with patch("mcp_server.random.randint", return_value=10):
             rc = mcp_server.roll_check(reason="挥砍攻击", sides=20)
-        self.assertEqual(rc["total"], 12)  # 10 + 2
+        self.assertEqual(rc["total"], 16)  # 10 + 2(精通passive) + 4(敏)
 
     def test_active_sword_art_costs_sp(self):
         mcp_server.SESSION.state.vitals.stamina = 10
