@@ -19,7 +19,7 @@ from textual.widgets import Header, Footer, Input, Markdown, Static
 from .agent import make_agent
 from .config import LLMConfig
 
-FLUSH_CHARS = 60   # 流式节流：缓冲超过这么多字符（或遇换行）才刷一次
+FLUSH_CHARS = 24   # 流式节流：缓冲超过这么多字符（或遇换行）才刷一次（纯文本刷新便宜，可较密）
 
 
 def live_hud() -> str:
@@ -107,32 +107,45 @@ class TextAdventureApp(App):
         self.call_from_thread(convo.mount, placeholder)
         self.call_from_thread(convo.scroll_end, animate=False)
 
-        state = {"md": None, "placeholder": placeholder}
+        # 流式期：纯文本 Static 逐字显示（便宜，不解析 markdown）。
+        # 整段结束(final)：换成 Markdown 一次性渲染（代码块/加粗/列表才出来）。
+        # 这样既流畅又能渲染——避免每个 chunk 都重排整段 markdown 的 O(n²) 卡顿。
+        state = {"live": None, "placeholder": placeholder, "text": ""}
         buf: list[str] = []
 
-        def ensure_bubble():
-            """首次有文字时：移除占位，挂上 GM 的 Markdown 气泡。"""
-            if state["md"] is None:
+        def ensure_live():
+            """首次有文字时：移除占位，挂上纯文本流式气泡。"""
+            if state["live"] is None:
                 if state["placeholder"] is not None:
                     self.call_from_thread(state["placeholder"].remove)
                     state["placeholder"] = None
-                md = Markdown("", classes="gm-msg")
-                self.call_from_thread(convo.mount, md)
-                state["md"] = md
+                live = Static("", classes="gm-msg")
+                self.call_from_thread(convo.mount, live)
+                state["live"] = live
 
         def flush():
+            """把缓冲并入累计文本，整体刷新纯文本气泡（纯文本 update 极便宜）。"""
             if not buf:
                 return
-            ensure_bubble()
-            text = "".join(buf)
+            ensure_live()
+            state["text"] += "".join(buf)
             buf.clear()
-            self.call_from_thread(state["md"].append, text)
+            self.call_from_thread(state["live"].update, state["text"])
+            self.call_from_thread(convo.scroll_end, animate=False)
+
+        def finalize_markdown():
+            """整段完成：把纯文本气泡换成渲染好的 Markdown。"""
+            if state["live"] is None or not state["text"].strip():
+                return
+            md = Markdown(state["text"], classes="gm-msg")
+            self.call_from_thread(convo.mount, md, after=state["live"])
+            self.call_from_thread(state["live"].remove)
+            state["live"] = None
             self.call_from_thread(convo.scroll_end, animate=False)
 
         try:
             for kind, payload in self.agent.run_turn_stream(player_input):
                 if kind == "tool":
-                    # 工具调用：更新占位文字（若还在），不污染叙事气泡
                     if state["placeholder"] is not None:
                         self.call_from_thread(
                             state["placeholder"].update, f"⋯ GM 正在查看（{payload}）")
@@ -142,13 +155,13 @@ class TextAdventureApp(App):
                         flush()
                 elif kind == "final":
                     flush()
+                    finalize_markdown()
         except Exception as exc:
-            ensure_bubble()
+            ensure_live()
             self.call_from_thread(
-                state["md"].append, f"\n\n> ✗ 出错：{type(exc).__name__}: {exc}")
+                state["live"].update, state["text"] + f"\n\n✗ 出错：{type(exc).__name__}: {exc}")
         finally:
-            # 收尾：没产生任何气泡（纯报错前）也清掉占位
-            if state["md"] is None and state["placeholder"] is not None:
+            if state["live"] is None and state["placeholder"] is not None:
                 self.call_from_thread(state["placeholder"].remove)
             self.call_from_thread(self._finish_turn)
 
