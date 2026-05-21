@@ -107,7 +107,7 @@ body{
 .msg.system{font-family:var(--mono);font-size:12.5px;color:var(--fg-mute);display:flex;gap:8px;align-items:baseline}
 .msg.system .pip{width:7px;height:7px;border-radius:50%;background:var(--fg-mute);flex:0 0 auto;margin-top:6px}
 .msg.system.ok .pip{background:var(--green)} .msg.system.fail .pip{background:var(--red)} .msg.system.warn .pip{background:var(--amber)}
-.thinking{color:var(--fg-mute);font-family:var(--mono);font-size:12px;font-style:italic;opacity:.8}
+.thinking{color:var(--fg-mute);font-family:var(--mono);font-size:12px;font-style:italic;opacity:.8;max-width:72ch;width:100%;margin:0 auto 18px auto}
 .cursor::after{content:'▌';color:var(--amber);animation:blink 1s step-end infinite}
 @keyframes blink{50%{opacity:0}}
 
