@@ -114,4 +114,4 @@ content 是纯数据。照着 `content/yanan.py` 写一份新模块（房间 `Ro
 
 ## 许可证
 
-[Apache License 2.0](LICENSE)。
+[MIT License](LICENSE)。
