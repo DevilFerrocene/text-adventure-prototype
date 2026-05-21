@@ -3,10 +3,11 @@
 运行：python -m standalone.tui
 LLM 配置从 .env 读（OpenAI 兼容：OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL）。
 
-设计要点（针对硬伤）：
-- 用 Markdown widget 真渲染代码块/加粗/列表（HUD、骰子卡、场景清单都是 md），不再是纯文本。
-- 流式往 Markdown.append() 节流写入（攒到换行或 ~60 字才刷一次），避免每个 delta 重绘卡顿。
-- 玩家输入与 GM 叙事用不同气泡样式区分；间距、配色、状态栏走 CSS。
+设计要点：
+- 高级终端美学：精调主题（tokyo-night）+ 带标题面板 + IDE 式左色条角色标记（非聊天气泡）。
+- 流式期逐字写纯文本 Static（便宜），整段完成才换 Markdown 一次性渲染（代码块/加粗/列表），
+  避免每 chunk 重排 markdown 的 O(n²) 卡顿。
+- 玩家行 = 次色左条；GM 叙事 = 强调色左条 + markdown 渲染。
 """
 from __future__ import annotations
 
@@ -36,33 +37,60 @@ def live_hud() -> str:
 
 
 class TextAdventureApp(App):
+    # 高级终端美学：用精调主题（tokyo-night 等）+ 带标题面板 + IDE 式左色条角色标记，
+    # 不做聊天气泡。配色全走主题变量，整体协调克制（lazygit/k9s 风）。
     CSS = """
-    Screen { layout: vertical; background: $surface; }
+    Screen { layout: vertical; }
 
+    /* 顶部状态面板：圆角标题边框，HUD 居中留白 */
     #status {
-        height: auto; min-height: 2; padding: 1 2;
-        background: $boost; color: $text;
-        border: round $primary; margin: 0 1;
+        height: auto; min-height: 3; padding: 0 2;
+        color: $text;
+        border: round $primary 60%;
+        border-title-color: $primary;
+        border-title-align: left;
+        margin: 1 2 0 2;
     }
 
-    #convo { height: 1fr; padding: 1 2; scrollbar-gutter: stable; }
-
-    /* 玩家输入气泡：靠右、青色、缩进 */
-    .player-msg {
-        width: auto; max-width: 80%; margin: 1 0 0 8;
-        padding: 0 2; color: $text;
-        background: $primary 20%; border: round $primary; text-align: right;
+    /* 中部叙事面板：占满，标题边框，内部滚动 */
+    #convo {
+        height: 1fr; padding: 1 2;
+        border: round $surface-lighten-2;
+        border-title-color: $accent;
+        border-title-align: left;
+        margin: 1 2 0 2;
+        scrollbar-gutter: stable;
+        scrollbar-color: $primary 40%;
+        scrollbar-background: $surface;
     }
 
-    /* GM 叙事气泡：左侧、留边、左侧强调线 */
-    .gm-msg { margin: 1 4 0 0; padding: 0 1; border-left: thick $accent; }
+    /* 玩家行：左侧次色条，无框，简洁缩进 */
+    .msg-player {
+        margin: 1 0 0 0; padding: 0 0 0 1;
+        color: $text-muted; text-style: italic;
+        border-left: thick $secondary;
+    }
+
+    /* GM 叙事：左侧强调色条，渲染 markdown */
+    .msg-gm {
+        margin: 1 0 0 0; padding: 0 0 0 1;
+        border-left: thick $accent;
+    }
 
     /* 思考中占位 */
-    .thinking { margin: 1 0 0 0; color: $text-muted; text-style: italic; }
+    .thinking {
+        margin: 1 0 0 1; color: $text-muted; text-style: italic;
+        border-left: thick $warning;
+    }
 
-    #input { dock: bottom; margin: 0 1 1 1; border: round $accent; }
+    /* 底部输入：标题边框，聚焦时强调 */
+    #input {
+        dock: bottom; margin: 1 2; border: round $surface-lighten-2;
+        border-title-color: $text-muted; border-title-align: left;
+    }
+    #input:focus { border: round $accent; }
     """
-    BINDINGS = [("ctrl+c", "quit", "退出")]
+    BINDINGS = [("ctrl+c", "quit", "退出"), ("ctrl+l", "clear", "清屏")]
 
     def __init__(self, config: LLMConfig):
         super().__init__()
@@ -74,12 +102,17 @@ class TextAdventureApp(App):
         yield Header(show_clock=True)
         yield Static("（启动中…）", id="status")
         yield VerticalScroll(id="convo")
-        yield Input(placeholder="输入你的行动…（回车提交）", id="input")
+        yield Input(placeholder="输入你的行动…", id="input")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.title = "文字冒险 · 独立版"
-        self.sub_title = f"{self.config.model}"
+        self.theme = "tokyo-night"
+        self.title = "文字冒险"
+        self.sub_title = self.config.model
+        # 面板标题（lazygit 式）
+        self.query_one("#status", Static).border_title = "状 态"
+        self.query_one("#convo", VerticalScroll).border_title = "叙 事"
+        self.query_one("#input", Input).border_title = "你的行动"
         self._run_turn("")   # 开局：空输入让 GM 起手
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -87,12 +120,15 @@ class TextAdventureApp(App):
         event.input.value = ""
         if not text or self._busy:
             return
-        # 玩家气泡
+        # 玩家行（左侧次色条标记，无框）
         convo = self.query_one("#convo", VerticalScroll)
-        bubble = Static(text, classes="player-msg")
-        convo.mount(bubble)
+        convo.mount(Static(f"❯ {text}", classes="msg-player"))
         convo.scroll_end(animate=False)
         self._run_turn(text)
+
+    def action_clear(self) -> None:
+        """清屏（保留游戏状态，只清叙事区显示）。"""
+        self.query_one("#convo", VerticalScroll).remove_children()
 
     def _run_turn(self, player_input: str) -> None:
         self._busy = True
@@ -119,7 +155,7 @@ class TextAdventureApp(App):
                 if state["placeholder"] is not None:
                     self.call_from_thread(state["placeholder"].remove)
                     state["placeholder"] = None
-                live = Static("", classes="gm-msg")
+                live = Static("", classes="msg-gm")
                 self.call_from_thread(convo.mount, live)
                 state["live"] = live
 
@@ -137,7 +173,7 @@ class TextAdventureApp(App):
             """整段完成：把纯文本气泡换成渲染好的 Markdown。"""
             if state["live"] is None or not state["text"].strip():
                 return
-            md = Markdown(state["text"], classes="gm-msg")
+            md = Markdown(state["text"], classes="msg-gm")
             self.call_from_thread(convo.mount, md, after=state["live"])
             self.call_from_thread(state["live"].remove)
             state["live"] = None
