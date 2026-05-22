@@ -153,5 +153,81 @@ class CombatTest(unittest.TestCase):
         self.assertFalse(mcp_server.SESSION.in_combat)
 
 
+class ActionEconomyTest(unittest.TestCase):
+    """§14-R2：action_economy=True 下，每回合 1 大动 + 1 小动。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game()["ok"])
+        mcp_server.start_combat(canon=["dock_thug"])
+        self.enc = mcp_server.SESSION.encounter
+        self.enc.action_economy = True
+        # 敌人血量拉满，避免一刀斩杀提前结束遭遇
+        thug = self.enc.combatants["enemy_dock_thug"]
+        thug.hp = thug.max_hp = 999
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="test cleanup")
+
+    def test_major_keeps_turn_then_minor_advances(self):
+        # 大动（攻击）后回合不过，仍是 player，且小动可用
+        r1 = mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_dock_thug")
+        self.assertTrue(r1["ok"])
+        self.assertEqual(r1["next_actor"], "player")
+        self.assertEqual(r1["actions_left"], {"major": False, "minor": True})
+        # 小动（走位）耗尽第二槽 → 回合推进给敌人
+        r2 = mcp_server.declare_intent(
+            actor="player", intent="move", target="retreat")
+        self.assertTrue(r2["ok"])
+        self.assertEqual(r2["next_actor"], "enemy_dock_thug")
+
+    def test_second_major_rejected(self):
+        mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_dock_thug")
+        r = mcp_server.declare_intent(
+            actor="player", intent="defend")
+        self.assertFalse(r["ok"])
+        self.assertIn("大动", r["error"])
+
+    def test_end_turn_forfeits_remaining(self):
+        # 直接 end_turn，放弃两槽 → 立刻轮到敌人
+        r = mcp_server.declare_intent(actor="player", intent="end_turn")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["next_actor"], "enemy_dock_thug")
+
+    def test_move_changes_rank_and_clamps(self):
+        self.enc.rank_depth = 2
+        player = self.enc.combatants["player"]
+        player.rank = 0
+        r = mcp_server.declare_intent(
+            actor="player", intent="move", target="retreat")
+        self.assertTrue(r["ok"])
+        self.assertEqual(player.rank, 1)
+        # 再退一步被 rank_depth 钳制（仍是同回合的大动尚未用，回合不过）
+        # 此时小动已用完，move 应被拒
+        r2 = mcp_server.declare_intent(
+            actor="player", intent="move", target="retreat")
+        self.assertFalse(r2["ok"])
+        self.assertIn("小动", r2["error"])
+
+    def test_next_actor_slots_reset(self):
+        # 玩家用满两槽推进 → 敌人回合开始，敌人两槽应为初始 False
+        mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_dock_thug")
+        mcp_server.declare_intent(actor="player", intent="end_turn")
+        thug = self.enc.combatants["enemy_dock_thug"]
+        self.assertFalse(thug.acted_major)
+        self.assertFalse(thug.acted_minor)
+
+    def test_legacy_mode_unchanged(self):
+        # action_economy=False 时，一动即过（回归保证）
+        self.enc.action_economy = False
+        r = mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_dock_thug")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["next_actor"], "enemy_dock_thug")
+
+
 if __name__ == "__main__":
     unittest.main()

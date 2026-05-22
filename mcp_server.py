@@ -2822,6 +2822,15 @@ def end_combat(reason: str = "") -> dict:
     return result
 
 
+# §14-R2 行动经济：每意图的默认动作耗费。仅 Encounter.action_economy=True 时门控。
+# major=大动（攻击/防御/逃跑/用物，每回合 1 个）；minor=小动（走位，每回合 1 个）；
+# free=不占槽（主动结束回合）。技能可在 ActiveSkill.action_cost 自定义（暂未接入本工具）。
+INTENT_ACTION_COST = {
+    "attack": "major", "defend": "major", "flee": "major",
+    "use_item": "major", "move": "minor", "end_turn": "free",
+}
+
+
 @mcp.tool()
 def declare_intent(actor: str, intent: str, target: str = "",
                    skill_id: str = "", weapon: str = "") -> dict:
@@ -2829,12 +2838,17 @@ def declare_intent(actor: str, intent: str, target: str = "",
 
     Args:
         actor:     行动者 id（"player" 或 "enemy_xxx"）
-        intent:    意图 — attack / defend / flee / use_item / use_skill
-        target:    目标 id（attack 时必填）
+        intent:    意图 — attack / defend / flee / use_item / move / end_turn
+        target:    目标 id（attack 必填）；move 时为 advance/retreat 或目标排号
         skill_id:  使用的技能 id（可选）
         weapon:    使用的武器 id（可选，从背包取）
 
     内部完整执行：命中判定 → 伤害 → buff → 死亡判定，返回 CombatEvent[] + 下一行动者。
+
+    §14-R2 行动经济（仅 Encounter.action_economy=True）：每回合 1 大动 + 1 小动。
+    attack/defend/flee/use_item=大动，move=小动，end_turn=free（放弃剩余槽并过回合）。
+    未耗尽两槽且未 end_turn 时，next_actor 仍为本人，附带 actions_left。
+    action_economy=False 时维持旧"一动即过"。
     """
     if err := _require_started():
         return err
@@ -2851,6 +2865,17 @@ def declare_intent(actor: str, intent: str, target: str = "",
 
     combatant = enc.combatants[actor]
     events: list[CombatEvent] = []
+
+    # ── §14-R2 行动经济门控（仅 action_economy=True 生效；否则维持"一动即过"）──
+    econ = enc.action_economy
+    cost = INTENT_ACTION_COST.get(intent, "major")
+    if econ and intent in INTENT_ACTION_COST and cost in ("major", "minor"):
+        if cost == "major" and combatant.acted_major:
+            return {"ok": False,
+                    "error": "本回合大动已用完。还可：小动(move)/结束回合(end_turn)"}
+        if cost == "minor" and combatant.acted_minor:
+            return {"ok": False,
+                    "error": "本回合小动已用完。还可：大动(attack/defend/...)/结束回合(end_turn)"}
 
     # ── attack ──
     if intent == "attack":
@@ -2986,8 +3011,39 @@ def declare_intent(actor: str, intent: str, target: str = "",
         else:
             return {"ok": False, "error": f"物品 {weapon!r} 不在背包"}
 
+    # ── move（§14-R2 小动：改列阵位 rank）──
+    elif intent == "move":
+        old_rank = combatant.rank
+        if target == "advance":
+            new_rank = max(0, old_rank - 1)
+        elif target == "retreat":
+            new_rank = min(enc.rank_depth - 1, old_rank + 1)
+        elif target.lstrip("-").isdigit():
+            new_rank = max(0, min(enc.rank_depth - 1, int(target)))
+        else:
+            return {"ok": False,
+                    "error": "move 需 target=advance/retreat 或目标排号(0=最前)"}
+        combatant.rank = new_rank
+        events.append(CombatEvent(
+            kind="move", actor=actor, target="",
+            detail={"from_rank": old_rank, "to_rank": new_rank},
+        ))
+
+    # ── end_turn（§14-R2 free：主动结束回合、放弃剩余动作槽）──
+    elif intent == "end_turn":
+        events.append(CombatEvent(
+            kind="end_turn", actor=actor, target="", detail={},
+        ))
+
     else:
-        return {"ok": False, "error": f"不支持的意图 {intent!r}，可用: attack/defend/flee/use_item"}
+        return {"ok": False,
+                "error": f"不支持的意图 {intent!r}，可用: attack/defend/flee/use_item/move/end_turn"}
+
+    # ── §14-R2：动作落地，置位对应动作槽（free 不占槽）──
+    if econ and cost == "major":
+        combatant.acted_major = True
+    elif econ and cost == "minor":
+        combatant.acted_minor = True
 
     # ── Check if all enemies dead ──
     all_enemies_dead = all(
@@ -3002,6 +3058,25 @@ def declare_intent(actor: str, intent: str, target: str = "",
     # ── Append events to log ──
     enc.log.extend(events)
     _write_combat_log(events, enc, "declare_intent")
+
+    # ── §14-R2：行动经济下，未耗尽两槽且未显式 end_turn → 留在同一行动者，回合不过 ──
+    if econ:
+        turn_over = (intent == "end_turn") or (combatant.acted_major and combatant.acted_minor)
+    else:
+        turn_over = True
+    if econ and not turn_over and not all_enemies_dead:
+        snapshot = _encounter_snapshot()
+        return {
+            "ok": True,
+            "events": [
+                {"kind": e.kind, "actor": e.actor, "target": e.target, "detail": e.detail}
+                for e in events
+            ],
+            "encounter": snapshot,
+            "next_actor": actor,
+            "actions_left": {"major": not combatant.acted_major,
+                             "minor": not combatant.acted_minor},
+        }
 
     # ── Advance turn ──
     dead_ids = {cid for cid, c in enc.combatants.items() if c.is_dead}
@@ -3043,6 +3118,13 @@ def declare_intent(actor: str, intent: str, target: str = "",
         enc.round += 1
         # §9/E2：一整轮战斗结束 → 所有 bearer 的 buff tick（流血/灼烧/过期）
         events.extend(_tick_combat_round(enc, SESSION.state))
+
+    # §14-R2：新行动者的回合开始 → 清空其动作槽（大动/小动各一）
+    if econ:
+        nxt = enc.combatants.get(next_id)
+        if nxt is not None:
+            nxt.acted_major = False
+            nxt.acted_minor = False
 
     snapshot = _encounter_snapshot()
     return {
