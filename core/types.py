@@ -392,6 +392,9 @@ class GameState:
     skills: List["Skill"] = field(default_factory=list)
     improvised_buff_count_this_turn: int = 0
     equipped: dict = field(default_factory=dict)   # {slot: item_id}，§11 RPG 数值骨架
+    # §12 危机合约：玩家给【下一场战斗】立的挑战契约，被 start_combat 消费、缩放奖励。
+    # {clauses:[id...], difficulty:int, reward_mult:float}；None=未立约。
+    pending_contract: Optional[dict] = None
 
     def has_item(self, item_id: str) -> bool:
         return any(i.id == item_id for i in self.inventory)
@@ -753,6 +756,9 @@ class Encounter:
     # §14-R2：行动经济总开关。False=旧流程（一动即过，206 测试/3 前端不变）；
     # True=战术模式（每回合 1 大动 + 1 小动，按 action_cost 门控，回合需显式/耗尽才过）。
     action_economy: bool = False
+    # §12：本场战斗附带的危机合约（start_combat 从 state.pending_contract 转入），
+    # 胜利时 end_combat 按 reward_mult 缩放经验/掉落。None=无契约。
+    contract: Optional[dict] = None
 
 
 # ── 路线九 §9：实体能力契约 ────────────────────────────────────────

@@ -2552,6 +2552,37 @@ def _enemy_profiles_for_scene(state: GameState) -> list:
     return profiles
 
 
+# ── §12 危机合约：词条库 + 套用 ───────────────────────────────────
+# 设计：玩家【作者难度】，引擎吃得住极端强化，奖励按难度【确定性】缩放——
+# power 靠 build 挣，难度靠玩家自己开。词条只强化敌人（"玩家造敌人，造轴"），
+# 在 start_combat 时套到敌方 Combatant，胜利时 end_combat 按 reward_mult 放大奖励。
+CONTRACT_CLAUSES = {
+    "fury":    {"label": "狂暴", "desc": "敌全员伤害 +2",          "weight": 2, "effect": {"dmg_bonus": 2}},
+    "bulwark": {"label": "磐石", "desc": "敌全员血量 ×1.5",        "weight": 2, "effect": {"hp_mult": 1.5}},
+    "aegis":   {"label": "铁壁", "desc": "敌全员 AC +3（更难命中）", "weight": 2, "effect": {"ac_add": 3}},
+    "swift":   {"label": "疾风", "desc": "敌全员速度 +6（更易抢先手）", "weight": 1, "effect": {"speed_add": 6}},
+}
+
+
+def _apply_contract_to_combatants(contract: dict, combatants: dict) -> None:
+    """把契约词条套到敌方 Combatant（spawn 时一次性，确定性）。"""
+    clauses = contract.get("clauses", []) if contract else []
+    for c in combatants.values():
+        if c.side != "enemy":
+            continue
+        for clause_id in clauses:
+            eff = (CONTRACT_CLAUSES.get(clause_id) or {}).get("effect", {})
+            if "ac_add" in eff:
+                c.ac += int(eff["ac_add"])
+            if "speed_add" in eff:
+                c.speed += int(eff["speed_add"])
+            if "hp_mult" in eff:
+                c.max_hp = max(1, int(round(c.max_hp * eff["hp_mult"])))
+                c.hp = c.max_hp
+            if "dmg_bonus" in eff:
+                c.damage_expr = f"{c.damage_expr}+{int(eff['dmg_bonus'])}"
+
+
 # ── 战斗 MCP 工具 ────────────────────────────────────────────────
 
 @mcp.tool()
@@ -2640,7 +2671,14 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None,
                 ec.id = cid
                 combatants[cid] = ec
 
+    # ── §12 危机合约：消费 state.pending_contract，套到敌方 + 记到 encounter ──
+    active_contract = state.pending_contract
+    if active_contract:
+        _apply_contract_to_combatants(active_contract, combatants)
+        state.pending_contract = None   # 立约只对这一场生效，用掉即清
+
     # ── Initiative: player first, then enemies by speed descending ──
+    # （契约的 swift 已改了敌速，这里据改后速度排序）
     turn_order = ["player"]
     enemy_ids = [cid for cid in combatants if cid != "player"]
     enemy_ids.sort(key=lambda cid: combatants[cid].speed, reverse=True)
@@ -2650,7 +2688,8 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None,
     enc_id = f"enc_{state.turn}_{len(canon) + sum(i.get('count', 1) for i in improvised)}"
     enc = Encounter(id=enc_id, combatants=combatants, turn_order=turn_order,
                     round=1, active_idx=0, log=[],
-                    rank_depth=rank_depth, action_economy=tactical)
+                    rank_depth=rank_depth, action_economy=tactical,
+                    contract=active_contract)
     SESSION.encounter = enc
 
     snapshot = _encounter_snapshot()
@@ -2704,6 +2743,59 @@ def request_combat(reason: str, canon: list[str] = None,
     result["reason"] = reason
     result["initiative_advantage"] = initiative_advantage
     return result
+
+
+@mcp.tool()
+def take_contract(clauses: list[str] = None) -> dict:
+    """§12 危机合约：为【下一场战斗】立挑战契约。玩家自选难度词条强化敌人，
+    胜利时经验/金币按难度【确定性】放大——power 靠 build 挣，难度靠你自己开。
+
+    Args:
+        clauses: 词条 id 列表，可选多条。可用词条见返回的 available（或传空查看）：
+                 fury(敌伤+2) / bulwark(敌血×1.5) / aegis(敌AC+3) / swift(敌速+6)。
+
+    立约后下一场 `start_combat`/`request_combat`（任意遭遇）自动套用到敌方，用掉即清。
+    再次调用会覆盖旧契约。战斗中不可立约。
+    """
+    if err := _require_started():
+        return err
+    if SESSION.in_combat:
+        return {"ok": False, "error": "战斗中无法立约，请在开战前立。"}
+
+    available = [
+        {"id": cid, "label": c["label"], "desc": c["desc"], "weight": c["weight"]}
+        for cid, c in CONTRACT_CLAUSES.items()
+    ]
+    clauses = clauses or []
+    valid, unknown, seen = [], [], set()
+    for cid in clauses:
+        if cid in CONTRACT_CLAUSES:
+            if cid not in seen:
+                seen.add(cid)
+                valid.append(cid)
+        else:
+            unknown.append(cid)
+
+    if not valid:
+        # 没给有效词条 → 当作"查看词条库"，不报错硬失败
+        return {"ok": False, "error": "未提供有效词条。",
+                "available": available, "unknown": unknown}
+
+    difficulty = sum(CONTRACT_CLAUSES[c]["weight"] for c in valid)
+    reward_mult = round(1 + 0.2 * difficulty, 2)
+    contract = {"clauses": valid, "difficulty": difficulty, "reward_mult": reward_mult}
+    SESSION.state.pending_contract = contract
+    _autosave()
+    return {
+        "ok": True,
+        "contract": contract,
+        "applies_to": "下一场战斗",
+        "chosen": [{"id": c, "label": CONTRACT_CLAUSES[c]["label"],
+                    "desc": CONTRACT_CLAUSES[c]["desc"]} for c in valid],
+        "unknown": unknown,
+        "available": available,
+        "note": f"难度 {difficulty} → 胜利经验 ×{reward_mult}、额外金币 +{20 * difficulty}",
+    }
 
 
 # ── §11 R4：角色经验 / 升级循环 ──────────────────────────────────
@@ -2845,6 +2937,27 @@ def end_combat(reason: str = "") -> dict:
             if c.archetype:
                 total_char_xp += CHAR_XP_BY_ARCHETYPE.get(c.archetype, 0)
 
+    # §12 危机合约：仅【胜利】（有敌且全灭）时按难度确定性放大奖励
+    contract = enc.contract
+    victory = bool(enemies_defeated) and all(
+        c.is_dead for c in enc.combatants.values() if c.side == "enemy"
+    )
+    contract_bonus = None
+    if contract and victory:
+        mult = contract.get("reward_mult", 1.0)
+        base_xp = total_char_xp
+        total_char_xp = int(round(total_char_xp * mult))
+        bonus_gold = 20 * int(contract.get("difficulty", 0))
+        SESSION.state.vitals.gold += bonus_gold
+        contract_bonus = {
+            "clauses": contract.get("clauses", []),
+            "difficulty": contract.get("difficulty", 0),
+            "reward_mult": mult,
+            "base_char_xp": base_xp,
+            "scaled_char_xp": total_char_xp,
+            "bonus_gold": bonus_gold,
+        }
+
     # §11 R4：结算角色经验
     xp_result = None
     if total_char_xp > 0:
@@ -2867,6 +2980,7 @@ def end_combat(reason: str = "") -> dict:
         "loot": loot,
         "char_xp_gained": total_char_xp,
         "char_level_up": xp_result.get("leveled_up", False) if xp_result else False,
+        "contract_bonus": contract_bonus,   # §12：立约胜利的奖励缩放明细（无约则 None）
         "events": events,
     }
 
@@ -3175,6 +3289,7 @@ def declare_intent(actor: str, intent: str, target: str = "",
             "char_xp_gained": end_result.get("char_xp_gained", 0),
             "char_level_up": end_result.get("char_level_up", False),
             "loot": end_result.get("loot", []),
+            "contract_bonus": end_result.get("contract_bonus"),   # §12 立约胜利缩放
         }
 
     # Bump round if we wrapped around to first
@@ -4323,6 +4438,7 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
         ],
         "skills": [_serialize_skill(s) for s in state.skills],
         "equipped": state.equipped,
+        "pending_contract": state.pending_contract,   # §12：未消费的危机合约
         "player_attrs": state.player_attrs,
         "world_attrs": state.world_attrs,
     }
@@ -4451,6 +4567,7 @@ def _session_from_data(data: dict) -> Optional[Session]:
         buffs=_load_buffs(data.get("buffs", [])),
         skills=_load_skills(data.get("skills", [])),
         equipped=data.get("equipped", {}),
+        pending_contract=data.get("pending_contract"),   # §12
         player_attrs=_clean_custom_attributes(data.get("player_attrs", {})),
         world_attrs=_clean_custom_attributes(data.get("world_attrs", {})),
     )

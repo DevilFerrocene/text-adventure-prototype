@@ -335,7 +335,8 @@ def register(world: GameWorld):
         exits={"north": "plains"},
         objects=["weapon_rack", "rack_iron_sword", "rack_dagger",
                  "teleport_crystal", "skill_trainer", "campfire",
-                 "camp_merchant", "lost_scout", "coin_pouch", "field_notes"],
+                 "camp_merchant", "lost_scout", "coin_pouch", "field_notes",
+                 "oath_altar"],
         area="苍穹回廊·第一层",
         zone="雾语草原·营地",
         coords=(0, 0),
@@ -497,6 +498,27 @@ def register(world: GameWorld):
                 consume_self=True,
             ),
         },
+    ))
+    world.add_object(GameObject(
+        id="oath_altar",
+        name="试炼誓约碑",
+        description=(
+            "营地角落一方半人高的黑石碑，碑面被无数把剑尖刻得伤痕累累——"
+            "每一道刻痕都是一位攻略者立下的「誓约」：自缚枷锁、加重试炼，"
+            "以向回廊换取更丰厚的回响。碑下小字写着回廊的古老交易：「难者多得」。\n"
+            "立约只对你的【下一场战斗】生效，胜则按难度放大经验与回响币（败则无咎，约自散）。\n"
+            "可选誓约词条（可多选叠加）：\n"
+            "· 狂暴——敌全员伤害 +2（难度 2）\n"
+            "· 磐石——敌全员血量 ×1.5（难度 2）\n"
+            "· 铁壁——敌全员 AC +3，更难命中（难度 2）\n"
+            "· 疾风——敌全员速度 +6，更易抢先手（难度 1）"
+        ),
+        kind="scenery",
+        named_tags=["contract", "altar"],
+        traits=["challenge", "self_imposed"],
+        takable=False,
+        # 立约是带参数的选择，走 take_contract 工具（GM 据玩家所选调用），
+        # 碑本身只作发现锚点 + 词条说明，不挂固定 affordance。
     ))
     world.add_object(GameObject(
         id="weapon_rack",
