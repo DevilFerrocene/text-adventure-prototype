@@ -16,9 +16,12 @@ class AincradWorldTest(unittest.TestCase):
 
     def test_world_starts_in_camp(self):
         self.assertEqual(mcp_server.SESSION.state.position, "camp")
-        # 起手有 SP（stamina）和铁剑
-        self.assertEqual(mcp_server.SESSION.state.vitals.max_stamina, 10)
-        self.assertTrue(mcp_server.SESSION.state.has_item("iron_sword"))
+        # 冷开局：赤贫无依——6 血、0 金、空背包、无技能、少量 SP
+        v = mcp_server.SESSION.state.vitals
+        self.assertEqual(v.max_hp, 6)
+        self.assertEqual(v.gold, 0)
+        self.assertEqual(mcp_server.SESSION.state.inventory, [])
+        self.assertEqual(mcp_server.SESSION.state.skills, [])
 
     def test_hud_shows_sp_and_floor(self):
         hud = mcp_server.get_state()["hud"]
@@ -75,21 +78,15 @@ class SkillsTest(unittest.TestCase):
         self.assertTrue(mcp_server.start_game("aincrad")["ok"])
         mcp_server.SESSION.modifiers.clear()
 
-    def test_starting_skills_in_state(self):
-        # 出身自带技能开局就该在 state.skills（不只是 obtained_from 字段说说）
+    def test_cold_open_has_no_skills_then_learnable(self):
+        # 冷开局一无所长：起手没有任何技能
+        self.assertEqual(mcp_server.SESSION.state.skills, [])
+        # 但技能可习得，习得后真进 state + 前台可见
+        self.assertTrue(mcp_server.learn_skill("sword_mastery")["ok"])
         ids = {s.id for s in mcp_server.SESSION.state.skills}
         self.assertIn("sword_mastery", ids)
-        self.assertIn("crisis_evasion", ids)
-        # 也出现在 state_context（前台可见）
         ctx_ids = {s["id"] for s in mcp_server.get_state()["state_context"]["skills"]}
         self.assertIn("sword_mastery", ctx_ids)
-
-    def test_starting_passive_works_without_relearn(self):
-        # 开局自带的精通，不用再 learn 就该生效
-        mcp_server.SESSION.modifiers.clear()
-        with patch("mcp_server.random.randint", return_value=10):
-            rc = mcp_server.roll_check(reason="挥砍攻击", sides=20)
-        self.assertEqual(rc["total"], 16)  # 10 + 2(自带精通) + 4(敏)
 
     def test_npc_teaches_skill_into_state(self):
         # 营地教官教学：真进 state.skills，不只是置 flag
@@ -179,9 +176,10 @@ class LabyrinthAndQuestTest(unittest.TestCase):
         self.assertIn("vertical_arc", {s.id for s in mcp_server.SESSION.state.skills})
 
     def test_quest_starts_at_floor_1(self):
+        # 冷开局首要任务是"破局"，攻略首领是后话
         q = mcp_server.get_state()["state_context"]["quest_log"][0]
-        self.assertEqual(q["id"], "floor_1_conquest")
-        self.assertEqual(q["stage"], "entered_floor_1")
+        self.assertEqual(q["id"], "break_the_deadlock")
+        self.assertEqual(q["stage"], "penniless")
 
     def test_grant_xp_levels_up_skill(self):
         mcp_server.learn_skill("sword_mastery")
@@ -234,6 +232,11 @@ class TacticalBossFightTest(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+        # 冷开局起手无武器；给一把近战 reach-1 剑（iron_sword）以测触及门控
+        from core.types import InventoryItem
+        mcp_server.SESSION.state.add_item(InventoryItem(
+            id="iron_sword", name="铁剑", kind="tool", equip_slot="weapon",
+            damage_expr="1d6", damage_type="slash", scaling={"str": 1.0}, reach=1))
         mcp_server.SESSION.state.position = "warden_gate"
 
     def tearDown(self):

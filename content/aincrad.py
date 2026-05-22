@@ -33,6 +33,21 @@ SPIRE_CANON = WorldCanon(
 # ── 怪物表（第一层 + 楼层首领）──────────────────────────────────────
 # damage_types_resist：>1.0 易伤（被克制），<1.0 抗性。空 dict = 全 1.0。
 ENEMIES = {
+    # 破局门槛怪：杀人兔——城外第一道坎，赤手空拳弄不死，有把武器才敢碰
+    "killer_rabbit": EnemyTemplate(
+        id="killer_rabbit", name="杀人兔",
+        archetype="brute_low", hp=8, max_hp=8, ac=10, speed=11,
+        damage_expr="1d4", damage_type="pierce",
+        behavior_profile="aggressive", skills=[],
+        damage_types_resist={},
+        loot=["rabbit_pelt"],
+        flavor=(
+            "一团雪白的、看起来人畜无害的长耳兔子，蹲在草地上抽动鼻子——"
+            "直到它转过头，你看见那不该长在兔子嘴里的两排尖牙，和沾着暗褐色干渍的爪子。"
+            "新人坟堆里十有八九埋的不是被首领杀的，是被它咬断脚筋、再慢慢啃死的。"
+            "赤手空拳别碰它：你 1d1 的拳头要打它八下，它 1d4 的牙打你两口就够。"
+        ),
+    ),
     # 草原杂兵：冲撞型野猪，皮糙肉厚但慢
     "frenzy_boar": EnemyTemplate(
         id="frenzy_boar", name="狂奔野猪",
@@ -317,6 +332,7 @@ def register(world: GameWorld):
         roles={"accuracy": "dex", "hp_growth": "con", "stamina_pool": "int"},
         equip_slots={"weapon": "主手", "armor": "护甲", "accessory": "饰品", "boots": "鞋"},
         level_curve="quadratic",
+        unarmed_damage="1d1",   # 冷开局：赤手空拳，一拳只有 1d1——逼玩家破局找武器
     )
 
     # ── 第一层「雾语草原」房间链 ──────────────────────────────────
@@ -325,14 +341,15 @@ def register(world: GameWorld):
         id="camp",
         name="回廊脚下·营地",
         base_description=(
-            "回廊塔底层的天然空洞，被前人凿宽撑高，成了攻略组的营寨。"
-            "中央篝火终年不熄——没人说得清是谁在添柴，它只是烧着，蓝焰无声舔舐雾草。"
-            "几顶褪色的帐篷和补给摊围成半圆，攻略者三三两两：磨剑的、打盹的、"
-            "死盯着刻印石板念念有词的。传送水晶立在营地正中，脉冲般明灭，像在呼吸。"
-            "抬头能望见第一层草原的雾气从上方裂口缓缓渗下，像天空在漏光。"
-            "这里是回廊的第一条不成文规则——「营地是安全的」。"
+            "回廊塔底层那座靠老攻略者们撑起来的边境小镇——与其说是镇，不如说是营寨。"
+            "中央篝火终年不熄，磨剑的、打盹的、对着刻印石板念叨的，没人多看你一眼。"
+            "你身上还带着昨天那顿淤青，兜里一个铜板都没有。这里的规矩很简单也很冷："
+            "谁都不欠新人一根头发，想要东西，自己挣。补给摊的老马罗、墙边的武器架、"
+            "教剑技的薇拉……每一样都标着看不见的价码。东边那间锈角酒馆倒是热闹——"
+            "热闹得正要打起来。北边镇门外就是草原，杀人兔在那儿等着没武器的傻瓜。"
+            "唯一的好消息：「镇子里安全」，至少没人会在火堆边捅你。"
         ),
-        exits={"north": "plains"},
+        exits={"north": "plains", "east": "tavern"},
         objects=["weapon_rack", "rack_iron_sword", "rack_dagger",
                  "teleport_crystal", "skill_trainer", "campfire",
                  "camp_merchant", "lost_scout", "coin_pouch", "field_notes",
@@ -343,23 +360,82 @@ def register(world: GameWorld):
         tags=["safe_zone", "no_combat", "respawn_point", "floor_1"],
     ))
 
+    # ── 破局路一：锈角酒馆 + 必触发的斗殴 ───────────────────────────
+    world.add_room(Room(
+        id="tavern",
+        name="锈角酒馆",
+        base_description=(
+            "门一推开，劣酒、汗味和松烟糊脸而来。十几号人挤在长条桌之间，"
+            "可此刻没人在喝——屋子正中，一队风尘仆仆的冒险者和两名披甲的镇卫吵得脸红脖子粗，"
+            "为的是一桩赏金该归谁。话越说越短，手越握越紧，木凳已经被人攥在手里。"
+            "再有一句不对付，这屋子就要炸。你一个新人卡在两拨人中间——可以缩到墙角看戏，"
+            "也可以挑一边搭把手。无论帮谁，凭你这身板，多半是挨一拳的份；"
+            "但回廊里的人认一个理：肯下场的，事后总有人记着这份情。"
+        ),
+        exits={"west": "camp"},
+        objects=["tavern_brawl", "tavern_keeper"],
+        area="苍穹回廊·第一层",
+        zone="锈角酒馆",
+        coords=(1, 0),
+        tags=["safe_zone", "social", "floor_1"],
+    ))
+
     world.add_room(Room(
         id="plains",
         name="雾语草原",
         base_description=(
-            "草高及腰，雾低过膝。整片界域像泡在一杯稀薄的乳白里，十步之外的景物开始融化。"
-            "风吹草动时你以为是自己眼花，但那些晃动里总有几处是逆着风向的——那是怪。"
-            "草原上散落着石祠、宝箱和齐腰草丛，攻略者在这里刷怪、攒金币、磨炼剑技。"
-            "北面雾气最浓处隐约立着几根青石柱，那是迷宫入口的轮廓。"
-            "空气里有青草、湿土和一种微弱的甜花香——那是雾语食人花的饵。"
+            "出了镇门就是草原：草高及腰，雾低过膝，十步之外的景物开始在乳白里融化。"
+            "风吹草动时你以为是眼花，但那些晃动里总有几处逆着风向——那是怪。"
+            "近处一棵孤零零的枯树杵在草里，断枝横七竖八，一看就经得起几下踹。"
+            "西边草色压暗，连成一道黑黢黢的树林轮廓；北面雾最浓处立着几根青石柱，是迷宫的入口。"
+            "脚边的草丛里，一团雪白的东西抽动着鼻子，长耳朵转向了你。"
         ),
-        exits={"south": "camp", "north": "labyrinth"},
-        objects=["field_chest", "mist_shrine", "tall_grass", "erin_talisman", "mist_cave_entrance"],
+        exits={"south": "camp", "north": "labyrinth", "west": "forest_edge"},
+        objects=["lone_tree", "field_chest", "mist_shrine", "tall_grass",
+                 "erin_talisman", "mist_cave_entrance"],
         area="苍穹回廊·第一层",
         zone="雾语草原",
         coords=(0, 1),
         tags=["field", "spawn_ground", "floor_1", "misty"],
-        enemies=["frenzy_boar", "gale_wolf", "mistbloom"],
+        enemies=["killer_rabbit", "frenzy_boar", "gale_wolf", "mistbloom"],
+    ))
+
+    # ── 林边 / 树林（破局路三：闯林进守林员小屋取手斧）──────────────
+    world.add_room(Room(
+        id="forest_edge",
+        name="雾语树林",
+        base_description=(
+            "草原西侧的树林，松木黑而密，针叶在脚下铺了厚厚一层，踩上去几乎没声。"
+            "雾在这里更重，能见度不足五步——你听得见自己绕过每一棵树时呼吸的回声。"
+            "林子里没有路，方向感很快就会被树干和雾吃掉；老话说，进雾语林靠的不是地图，是运气。"
+            "隐约地，深处有个方方正正的轮廓，像是一座被遗忘的小木屋。"
+        ),
+        exits={"east": "plains", "in": "forester_hut"},
+        # 闯进深处的小屋需要一点运气——GM 让玩家掷一把（迷路/野兽/雾），
+        # 过了再 gm_set_flag("forest_path_found", True, unlock_exit="in")。
+        locked_exits={"in": "forest_path_found"},
+        objects=["dense_pines"],
+        area="苍穹回廊·第一层",
+        zone="雾语树林",
+        coords=(-1, 1),
+        tags=["forest", "risky", "floor_1", "misty"],
+        enemies=["gale_wolf"],
+    ))
+    world.add_room(Room(
+        id="forester_hut",
+        name="废弃守林员小屋",
+        base_description=(
+            "一间塌了半边屋顶的原木小屋，门虚掩着，铰链锈成了橙红色。"
+            "屋里积着厚灰，桌上一盏熄了很久的油灯，墙角一张吊床烂成了网。"
+            "但工具墙还在——守林员走得匆忙，留下了几样吃饭的家伙。"
+            "其中一把短柄手斧斜插在劈柴墩上，斧刃蒙尘却没怎么卷口。"
+        ),
+        exits={"out": "forest_edge"},
+        objects=["chopping_block", "forester_hatchet", "dusty_shelf"],
+        area="苍穹回廊·第一层",
+        zone="守林员小屋",
+        coords=(-2, 1),
+        tags=["hidden", "shelter", "floor_1"],
     ))
 
     world.add_room(Room(
@@ -445,11 +521,11 @@ def register(world: GameWorld):
     # ── 营地物体 ──────────────────────────────────────────────────
     world.add_object(GameObject(
         id="coin_pouch",
-        name="回廊币袋",
+        name="瘪空的币袋",
         description=(
-            "一只磨得发亮的皮币袋，袋口用攻略组的螺旋纹铜扣束着，沉甸甸的。"
-            "里面是你目前攒下的回廊币——不过钱早记在你的身家里了（走身家账，不在这只袋子里），"
-            "袋子只是它的随身包装。烧了砸了它，账上的币一枚不少。"
+            "你随身那只皮币袋，眼下瘪得能透光——一个铜板都没有。"
+            "回廊的规矩：钱是记在你身家账上的（走身家，不在这只袋子里），袋子只是包装。"
+            "等你哪天有了进项，数字会涨在账上，不在这块破皮子里。烧它砸它，账上一文不动。"
         ),
         kind="container",
         named_tags=["currency"],
@@ -458,6 +534,83 @@ def register(world: GameWorld):
         # 金币是抽象资产（gold 走 vitals），不绑实体。袋子是叙事道具，标 indestructible，
         # 免得一发炎刃斩把存款"烧没"——破坏它在机制上无意义（抽象资产保护）。
         indestructible=True,
+    ))
+    # 锈角酒馆：斗殴事件 + 老板（破局路一）
+    world.add_object(GameObject(
+        id="tavern_brawl",
+        name="一触即发的争执",
+        description=(
+            "冒险者那队的领头是个独眼女人，叉着腰；镇卫这边一个满脸横肉的老兵按着剑柄。"
+            "两边为一笔杀人兔赏金的归属吵到了顶点，中间隔着的只剩一张快被掀翻的长桌。"
+            "你要是想插一脚，就得现在选边——之后可没人等你犹豫。"
+        ),
+        kind="event",
+        named_tags=["brawl", "faction_choice"],
+        traits=["one_shot"],
+        takable=False,
+        affordances={
+            "back_adventurers": Affordance(
+                verb="back_adventurers",
+                desc="站到冒险者一边，帮独眼女人撑场",
+                effect={
+                    "flags": {"brawl_done": True, "sided_adventurers": True,
+                              "tavern_ally": True},
+                    "gain_gold": 5,
+                    "clues": [
+                        "你往独眼女人身侧一站，话没说完，那老兵一个箭步就是一拳——"
+                        "正中你下巴，眼前一黑，等回过神已经趴在桌底数星星。架很快被劝开了。"
+                        "独眼女人把你从桌底拎起来，咧嘴一笑，往你手里塞了几枚回廊币："
+                        "「没用，但有种。这点算定金——以后锈角酒馆有你一杯。」"
+                        "（+5 回廊币；冒险者那伙记下了你这份情）"
+                    ],
+                },
+                consume_self=True,
+            ),
+            "back_guards": Affordance(
+                verb="back_guards",
+                desc="站到镇卫一边，帮老兵压场",
+                effect={
+                    "flags": {"brawl_done": True, "sided_guards": True,
+                              "tavern_ally": True},
+                    "gain_gold": 5,
+                    "clues": [
+                        "你挪到老兵身后虚张声势，结果第一个挨揍的还是你——"
+                        "独眼女人随手一推，你就撞翻了三条板凳。等尘埃落定，老兵拍拍你肩膀，"
+                        "力道大得差点把你拍散架：「新来的？有胆。」他丢给你几枚币，"
+                        "「镇卫记人情。下回城门口报我名字，老高。」"
+                        "（+5 回廊币；镇卫那边记下了你这份情）"
+                    ],
+                },
+                consume_self=True,
+            ),
+        },
+    ))
+    world.add_object(GameObject(
+        id="tavern_keeper",
+        name="酒馆老板·跛脚塞恩",
+        description=(
+            "拖着一条瘸腿在吧台后擦杯子的老男人，据说年轻时也是攻略者，被某层的怪咬断了跟腱。"
+            "他什么都见过，什么都不多嘴——除非你让他觉得你值得搭句话。"
+        ),
+        kind="npc",
+        named_tags=["bartender"],
+        traits=["veteran", "informant"],
+        takable=False,
+        affordances={
+            "ask_advice": Affordance(
+                verb="ask_advice",
+                desc="问跛脚塞恩，一个穷光蛋新人能从哪儿弄把武器",
+                effect={
+                    "flags": {"got_tavern_tip": True},
+                    "clues": [
+                        "塞恩斜眼打量你空荡荡的腰带，嗤了一声：「拳头打杀人兔？回去等死吧。」"
+                        "他压低声音：「实在没辙——城外那棵枯树，掰根硬枝也比空手强。"
+                        "再不济，往西边树林里赌一把，老守林员的破屋里听说还留着把手斧。"
+                        "当然，你要是嫌慢，今晚这场架，挑边站，挨顿打也能换几个子儿。」"
+                    ],
+                },
+            ),
+        },
     ))
     world.add_object(GameObject(
         id="field_notes",
@@ -522,28 +675,31 @@ def register(world: GameWorld):
     ))
     world.add_object(GameObject(
         id="weapon_rack",
-        name="武器架",
+        name="登记武器架",
         description=(
-            "营地的公用武器架，摆着几柄制式铁剑和一面打凹了的圆盾。"
-            "架脚被雾水泡过又晒干，木头翘了一层皮。"
-            "愿意要的话，拿一把就是——「反正死在外面的人也用不着了。」"
+            "靠墙立着一排上了锁链的制式铁剑和匕首，每把柄上拴着烙印登记牌。"
+            "旁边木板钉着告示：「攻略组共用军备，凭登记烙印领取。未登记者擅动，按盗械论处。」"
+            "你这个连铜板都没有、没人作保的新人，还轮不到在这上面登记——"
+            "想拿这儿的剑，先得在镇上挣出个名头来。"
         ),
         kind="container",
-        traits=["equipment"],
+        traits=["equipment", "locked"],
         takable=False,
-        reveals_objects=["rack_iron_sword", "rack_dagger"],
         affordances={
+            # 需"已登记"才能领——穷新人没这个 flag，等破局攒出立足之地(GM 裁定)再说。
             "take_sword": Affordance(
                 verb="take_sword",
-                desc="取下一柄制式铁剑",
+                desc="（需登记烙印）领一柄制式铁剑",
+                requires_flag="attacker_registered",
                 effect={"reveals_objects": ["rack_iron_sword"],
-                        "clues": ["你从架上取下一柄铁剑，重心刚好，刃口微卷——是把见过风雨的旧剑。"]},
+                        "clues": ["登记牌一扫，锁链应声而开。你取下一柄铁剑，重心刚好——总算像个攻略者了。"]},
             ),
             "take_dagger": Affordance(
                 verb="take_dagger",
-                desc="取下猎杀匕首",
+                desc="（需登记烙印）领一柄猎杀匕首",
+                requires_flag="attacker_registered",
                 effect={"reveals_objects": ["rack_dagger"],
-                        "clues": ["匕首握在掌心，刃薄到能藏在腰带里。草原上的疾风狼不会给你挥大剑的时间。"]},
+                        "clues": ["匕首握在掌心，刃薄到能藏进腰带。"]},
             ),
         },
     ))
@@ -771,6 +927,48 @@ def register(world: GameWorld):
         },
     ))
 
+    # ── 破局路二：枯树 → 木棍（1d4）──────────────────────────────────
+    world.add_object(GameObject(
+        id="lone_tree",
+        name="孤零的枯树",
+        description=(
+            "草原里一棵早就死透的枯树，灰白的树干裂着缝，断枝横七竖八地支棱着。"
+            "有几根粗细正合手的枝桠，看着就能掰下来当根棍子使——"
+            "对一个连把小刀都没有的人来说，这已经是天上掉下来的武器了。"
+        ),
+        kind="scenery",
+        traits=["improvised_weapon_source"],
+        takable=False,
+        hp=4, max_hp=4, ac=3,    # 枯木易断：砸/踹几下也能弄断（deal_damage 亦可）
+        on_destroyed=[{
+            "reveals_objects": ["wooden_club"],
+            "flags": {"got_first_weapon": True},
+            "clues": ["枯木"
+                      "应声而断，一根半臂长、握处正好的硬枝滚到脚边——你的第一件武器。"],
+        }],
+        affordances={
+            "break_branch": Affordance(
+                verb="break_branch",
+                desc="掰下一根趁手的硬枝当棍子",
+                effect={
+                    "reveals_objects": ["wooden_club"],
+                    "flags": {"got_first_weapon": True},
+                    "clues": ["你架住一根粗枝，全身的重量压上去——咔啦一声脆响，"
+                              "半臂长的硬木枝到了手里。掂了掂，能抡，能戳。聊胜于拳头。"],
+                },
+            ),
+        },
+    ))
+    world.add_object(GameObject(
+        id="wooden_club",
+        name="枯木棍",
+        description="从枯树上掰下的一截硬木枝，握处被你攥得发亮。没开刃，但抡圆了砸下去，比赤手强得多。1d4 钝击。",
+        kind="tool", hidden=True, takable=True,
+        traits=["weapon", "blunt", "improvised"],
+        equip_slot="weapon", damage_expr="1d4", damage_type="blunt",
+        scaling={"str": 1.0}, reach=1,
+    ))
+
     # ── 草原物体 ──────────────────────────────────────────────────
     world.add_object(GameObject(
         id="field_chest",
@@ -867,6 +1065,66 @@ def register(world: GameWorld):
                 desc="侧身挤进裂隙",
                 effect={"clues": ["你侧身挤过藤蔓，洞口初窄如咽喉，三步后豁然开朗——是一座发着青蓝磷光的天然洞窟。"],
                         "flags": {"mist_cave_found": True}},
+            ),
+        },
+    ))
+
+    # ── 破局路三：树林 → 守林员小屋 → 手斧（1d6）──────────────────────
+    world.add_object(GameObject(
+        id="dense_pines",
+        name="密匝匝的松林",
+        description=(
+            "雾在松干之间凝成看得见的灰白，越往里越浓。没有路，每一棵树看着都一样，"
+            "走上十几步回头就找不见来路了。深处那个方正轮廓还在——但要摸过去，"
+            "得在迷雾、错综的树根和林子里游荡的东西之间赌一把运气。"
+        ),
+        kind="scenery",
+        traits=["navigation_challenge", "risky"],
+        takable=False,
+        # 玩家说"我闯进去/往深处摸" → GM 让掷一把（感知/运气/敏捷，DC≈12）。
+        # 过 → gm_set_flag("forest_path_found", True, unlock_exit="in")，"in" 通往小屋。
+        # 败 → 迷路绕回、或惊动疾风狼（按情境裁定），可再试。
+    ))
+    world.add_object(GameObject(
+        id="forester_hatchet",
+        name="守林员手斧",
+        description=(
+            "斜插在劈柴墩上的一把短柄手斧，斧头蒙着灰却没怎么卷口——守林员保养得不错。"
+            "握柄被磨出了手型，配重压手，劈下去是实打实的杀伤。1d6 斩击，对付杀人兔绰绰有余。"
+        ),
+        kind="tool", hidden=False, takable=True,
+        traits=["weapon", "slash", "tool"],
+        equip_slot="weapon", damage_expr="1d6", damage_type="slash",
+        scaling={"str": 1.0}, reach=1,
+    ))
+    world.add_object(GameObject(
+        id="chopping_block",
+        name="劈柴墩",
+        description="一截齐腰高的硬木桩，顶面被斧子啃出无数月牙形的豁口。守林员手斧就插在它上面。",
+        kind="scenery",
+        traits=["furniture"],
+        takable=False,
+    ))
+    world.add_object(GameObject(
+        id="dusty_shelf",
+        name="积灰的工具墙",
+        description=(
+            "钉在原木墙上的工具架，挂钩多半空着——值钱的早被人顺走了。"
+            "只剩一卷霉烂的麻绳、半罐凝固的松脂、一把缺了齿的锯。翻翻或许能凑出点有用的。"
+        ),
+        kind="container",
+        traits=["scavenge"],
+        takable=False,
+        affordances={
+            "search": Affordance(
+                verb="search",
+                desc="在工具墙和墙角翻找还能用的东西",
+                effect={
+                    "flags": {"searched_hut": True},
+                    "clues": ["你扒拉开霉绳和锈锯，在墙缝里摸出三枚沾灰的回廊币——"
+                              "守林员藏的应急钱，如今归你了。"],
+                    "gain_gold": 3,
+                },
             ),
         },
     ))
@@ -1111,77 +1369,39 @@ def register(world: GameWorld):
     # ── 初始状态 ──────────────────────────────────────────────────
     world.initial_state = GameState(
         position="camp",
-        inventory=[InventoryItem(
-            id="iron_sword",
-            name="新手铁剑",
-            desc=(
-                "营地配发的制式铁剑，剑锷上刻着回廊攻略组的徽记——一道向上的螺旋。"
-                "刃口已有几处细小卷刃，但重心刚好，挥起来顺手。"
-                "这是你在回廊里的第一把剑，也许也是最后一把。"
-            ),
-            tags=["武器", "damage", "dmg:1d6"],  # 旧 tag 保留向后兼容
-            kind="tool",
-            named_tags=["weapon"],
-            modifiers=[],
-            # §11 结构化装备字段
-            equip_slot="weapon",
-            damage_expr="1d6",
-            damage_type="slash",
-            scaling={"str": 1.0, "dex": 1.0},  # 直剑：力敏双修
-            defense=0,
-            reach=1,            # §14：单手剑近战，只够打前排
-        ),
-        InventoryItem(
-            id="leather_vest",
-            name="皮背心",
-            desc="鞣制过的雾牛皮缝成的护胸，比看起来要结实。一股干草和硝烟的味道。",
-            tags=["防具"],
-            kind="item",
-            equip_slot="armor",
-            defense=2,
-            resist={},
-        ),
-        InventoryItem(
-            id="heal_crystal",
-            name="回复水晶",
-            desc="淡蓝色水晶，捏碎后回廊之力涌入体内，愈合伤口。",
-            tags=["消耗品", "回复"],
-            kind="consumable",
-            named_tags=[],
-            use_effect={"heal": 12},
-        )],
+        # 冷开局：身无长物。没有武器（赤手 1d1）、没有护甲、没有回复、没有钱。
+        # 第一件事是【破局】——靠脑子和胆子挣出第一把武器、第一枚铜板、第一个人脉。
+        inventory=[],
         flags={},
         alertness=0,
         clues=[],
         turn=0,
         profile=ActorProfile(
             name="你",
-            role="回廊攻略者",
-            background="被回廊烙印卷入苍穹回廊的剑士，目标是逐层登顶。",
+            role="流落的新烙印者",
+            background=(
+                "三天前被回廊烙印硬生生卷上这座浮空塔的倒霉蛋。没有剑、没有钱、"
+                "不认识任何人——只有一身淤青和一个还没死的事实。城里没人会白帮你。"
+            ),
         ),
         vitals=VitalStats(
-            hp=20,
-            max_hp=20,
-            gold=500,
+            hp=6,
+            max_hp=6,
+            gold=0,
             reputation=0,
-            ac=11,
-            speed=11,
-            stamina=10,       # SP
-            max_stamina=10,
+            ac=10,            # 无甲，赤身基线
+            speed=10,
+            stamina=4,        # SP 也低——还没本钱谈剑技
+            max_stamina=4,
             level=1,
             exp=0,
-            attributes={"str": 3, "dex": 4, "con": 3, "int": 2},
+            attributes={"str": 3, "dex": 4, "con": 3, "int": 2},  # 能挥拳，只是没武器没体格
         ),
-        # 出身自带技能（start:swordsman）：单手剑精通(被动) + 危机回避(反应)。
-        # start_game 会深拷贝，玩家成长状态独立于模板。
-        skills=[SKILLS["sword_mastery"], SKILLS["crisis_evasion"]],
+        # 一无所长：没有出身技能。剑技要靠破局后习得（教官/宝箱/剧情）。
+        skills=[],
         conditions=[],
-        relationships={
-            "skill_trainer": "mentor",
-            "camp_merchant": "shopkeeper",
-            "lost_scout": "fellow_survivor",
-            "warden_gorehoof": "floor_1_boss",
-        },
+        # 认识的人 0：镇上没有一个人欠你人情。关系靠破局后一点点挣。
+        relationships={},
         world_time=WorldTime(
             calendar="回廊历 第1层",
             day=1,
@@ -1191,10 +1411,36 @@ def register(world: GameWorld):
         ),
         quest_log=[
             QuestEntry(
+                id="break_the_deadlock",
+                title="破局",
+                stage="penniless",
+                summary=(
+                    "六点血、一双空拳、兜里一枚铜板都没有，连城外那只杀人兔都弄不死你"
+                    "——但你也弄不死它。在这座没人会白帮你的小镇里，第一件事是给自己"
+                    "挣出一条活路：一把像样的武器、第一笔钱、或者一个肯帮你的人。"
+                ),
+                deadline="",
+                # 阶段机（GM 用 update_quest 推进）：
+                #   penniless → armed（搞到第一把武器：木棍/手斧/或别的）
+                #   → first_blood（凭它弄死城外的杀人兔）→ standing（在镇上有了立足之地）
+                # 三条明路（非唯一）：①酒馆斗殴搏个道义补偿 ②攻击树得木棍
+                #   ③闯树林进废弃守林员小屋拿手斧。也可即兴，GM 用 gm_set_flag 裁定。
+                known_facts=[
+                    "你 hp 上限只有 6，赤手空拳只有 1d1，几乎打不动任何东西",
+                    "城外的杀人兔有 8 点血、会 1d4 撕咬，硬刚必死",
+                    "镇上没人会无偿帮一个没钱没名的新人",
+                ],
+                unresolved=[
+                    "去哪儿弄到第一把武器",
+                    "酒馆里那群人在吵什么",
+                    "城外的树林深处有什么",
+                ],
+            ),
+            QuestEntry(
                 id="floor_1_conquest",
                 title="攻略第一层",
-                stage="entered_floor_1",
-                summary="抵达苍穹回廊第一层「雾语草原」，目标是击败层守、开启通往第二层的回廊门。",
+                stage="not_yet",
+                summary="传说攻破雾语迷宫、击败层守裂蹄牛魔王，就能开启通往第二层的回廊门。但那是活下来、变强之后才敢想的事。",
                 deadline="",
                 # 阶段机（GM 用 update_quest 推进 stage）：
                 #   entered_floor_1 → cleared_labyrinth（解开符文门）

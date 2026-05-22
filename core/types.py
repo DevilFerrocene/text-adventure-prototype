@@ -509,6 +509,7 @@ class RuleBook:
     equip_slots: Dict[str, str] = field(default_factory=lambda: {"weapon": "主手", "armor": "护甲", "accessory": "饰品", "boots": "鞋"})
     level_curve: str = "quadratic"
     attr_per_level: int = 2      # 每升一级给的可分配属性点数
+    unarmed_damage: str = "1d4"  # 徒手攻击伤害（无武器时）；content 可调，如冷开局设 "1d1"
 
 
 def exp_to_reach(level: int) -> int:

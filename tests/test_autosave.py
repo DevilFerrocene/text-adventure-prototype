@@ -47,8 +47,7 @@ class AutosaveWriteTest(unittest.TestCase):
         mcp_server.call_affordance("treasure_chest", "open")  # learn vertical_arc + flag
         data = json.loads(_autosave_path().read_text(encoding="utf-8"))
         skill_ids = {s["id"] for s in data["skills"]}
-        self.assertIn("vertical_arc", skill_ids)
-        self.assertIn("sword_mastery", skill_ids)  # 出身自带
+        self.assertIn("vertical_arc", skill_ids)   # 宝箱习得的剑技已落盘
         self.assertTrue(data["flags"].get("got_skill_book"))
 
 
@@ -76,7 +75,8 @@ class RestoreTest(unittest.TestCase):
 
     def test_restored_skills_still_work(self):
         mcp_server.start_game("aincrad")
-        mcp_server.move("north")  # 触发一次 autosave，把出身技能写进去
+        mcp_server.learn_skill("sword_mastery")  # 习得一技 → 触发 autosave
+        mcp_server.learn_skill("crisis_evasion")
         _simulate_process_restart()
         ids = {s.id for s in mcp_server.SESSION.state.skills}
         self.assertIn("sword_mastery", ids)
@@ -135,7 +135,7 @@ class ResetGameTest(unittest.TestCase):
         self.assertTrue(r["reset"])
         self.assertEqual(mcp_server.SESSION.world_name, "aincrad")  # 沿用当前世界
         self.assertEqual(mcp_server.SESSION.state.position, "camp")  # 回到起点
-        self.assertEqual(mcp_server.SESSION.state.vitals.hp, 20)     # 满血新局
+        self.assertEqual(mcp_server.SESSION.state.vitals.hp, 6)      # 冷开局满血=6
 
     def test_reset_keeps_manual_saves(self):
         mcp_server.start_game("aincrad")

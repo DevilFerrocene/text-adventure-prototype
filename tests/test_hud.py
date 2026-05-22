@@ -10,9 +10,9 @@ class HudFieldTest(unittest.TestCase):
     def test_start_game_returns_hud(self):
         r = mcp_server.start_game()
         self.assertIn("hud", r)
-        # 关键数值在场（aincrad 起始）
-        self.assertIn("20/20", r["hud"])      # hp
-        self.assertIn("500", r["hud"])        # gold
+        # 关键数值在场（aincrad 冷开局：赤贫）
+        self.assertIn("6/6", r["hud"])        # hp
+        self.assertIn("💰 0", r["hud"])        # gold 0
         self.assertIn("营地", r["hud"])        # 位置
 
     def test_get_scene_returns_hud(self):
@@ -41,7 +41,7 @@ class HudFieldTest(unittest.TestCase):
 
     def test_hud_reflects_quest_stage(self):
         hud = mcp_server.get_state()["hud"]
-        self.assertIn("entered_floor_1", hud)
+        self.assertIn("penniless", hud)   # 冷开局首要任务：破局
 
     def test_hud_shows_active_buffs(self):
         mcp_server.add_improvised_buff(
@@ -58,8 +58,8 @@ class HudFieldTest(unittest.TestCase):
         self.assertIn("00:05", mcp_server.get_state()["hud"])
 
     def test_stamina_shown_when_present(self):
-        # aincrad 默认有 SP（max_stamina=10）→ ⚡ 显示
-        self.assertIn("⚡ 10/10", mcp_server.get_state()["hud"])
+        # aincrad 冷开局有少量 SP（max_stamina=4）→ ⚡ 显示
+        self.assertIn("⚡ 4/4", mcp_server.get_state()["hud"])
         # 归零后不再显示
         mcp_server.SESSION.state.vitals.max_stamina = 0
         mcp_server.SESSION.state.vitals.stamina = 0
@@ -82,7 +82,7 @@ class CombatHudTest(unittest.TestCase):
         self.assertIn("第 1 回合", hud)
         self.assertIn("你", hud)              # 玩家
         self.assertIn("狂奔野猪", hud)        # 敌人
-        self.assertIn("20/20", hud)           # 玩家血条
+        self.assertIn("6/6", hud)             # 玩家血条（冷开局 6 血）
         self.assertIn("9/9", hud)             # 敌人血条
 
     def test_active_marker_on_current_actor(self):

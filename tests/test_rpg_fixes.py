@@ -68,6 +68,12 @@ class UseItemTest(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+        # 冷开局起手无回复品、血上限 6；本组测消耗品机制，抬高上限 + 给一颗水晶
+        st = mcp_server.SESSION.state
+        st.vitals.max_hp = 20
+        st.add_item(InventoryItem(
+            id="heal_crystal", name="回复水晶", kind="consumable",
+            use_effect={"heal": 12}))
 
     def test_heal_potion_restores_hp_and_consumes(self):
         st = mcp_server.SESSION.state
@@ -111,9 +117,11 @@ class InspectSkillTest(unittest.TestCase):
         self.assertTrue(mcp_server.start_game("aincrad")["ok"])
 
     def test_passive_skill_effect_visible(self):
+        # 冷开局未自带 sword_mastery，但 inspect_skill 仍能查到它的定义
+        mcp_server.learn_skill("sword_mastery")
         r = mcp_server.inspect_skill("sword_mastery")
         self.assertTrue(r["ok"])
-        self.assertTrue(r["learned"])  # 出身自带
+        self.assertTrue(r["learned"])  # 习得后
         self.assertEqual(len(r["passive_modifiers"]), 1)
         pm = r["passive_modifiers"][0]
         self.assertEqual(pm["value"], 2)

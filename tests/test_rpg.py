@@ -102,6 +102,17 @@ class RPGEquipmentTest(unittest.TestCase):
 
     def setUp(self):
         mcp_server.start_game(world="aincrad")
+        # 冷开局起手无装备；本组测装备机制，先把铁剑/皮甲塞进背包
+        from core.types import InventoryItem
+        st = mcp_server.SESSION.state
+        st.add_item(InventoryItem(
+            id="iron_sword", name="新手铁剑", kind="tool",
+            tags=["武器", "damage", "dmg:1d6"], named_tags=["weapon"],
+            equip_slot="weapon", damage_expr="1d6", damage_type="slash",
+            scaling={"str": 1.0, "dex": 1.0}))
+        st.add_item(InventoryItem(
+            id="leather_vest", name="皮背心", kind="item",
+            equip_slot="armor", defense=2))
 
     def test_equip_weapon(self):
         # 铁剑已在背包

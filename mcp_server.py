@@ -668,8 +668,14 @@ def _apply_effect(effect: dict, state: GameState, world: GameWorld) -> dict | No
         state.vitals.gold -= cost_gold
 
     applied: dict = {"flags_set": {}, "clues_added": [], "items_removed": [], "revealed": [],
-                     "skills_learned": [], "gold_spent": cost_gold}
+                     "skills_learned": [], "gold_spent": cost_gold, "gold_gained": 0}
     room = world.get_room(state.position)
+
+    # gain_gold：发钱（任务/搜刮/道义补偿）。与 cost_gold 对称。
+    gain_gold = effect.get("gain_gold", 0)
+    if gain_gold > 0:
+        state.vitals.gold += gain_gold
+        applied["gold_gained"] = gain_gold
 
     if "unlock_exit" in effect and room:
         d = effect["unlock_exit"]
@@ -2395,11 +2401,14 @@ def _build_player_combatant(state: GameState) -> Combatant:
                 existing = combined_resist.get(dtype, 1.0)
                 combined_resist[dtype] = existing * val  # 叠乘
 
+    # 徒手伤害由世界 RuleBook 决定（冷开局可设 1d1）；有武器时 declare_intent 会覆盖
+    rb = getattr(SESSION.world, "rulebook", None)
+    unarmed = (rb.unarmed_damage if rb and getattr(rb, "unarmed_damage", None) else "1d4")
     return Combatant(
         id="player", name=state.profile.name, side="player",
         hp=state.vitals.hp, max_hp=state.vitals.max_hp,
         ac=player_ac, speed=state.vitals.speed,
-        damage_expr="1d4", damage_type="blunt",
+        damage_expr=unarmed, damage_type="blunt",
         damage_types_resist=combined_resist,
         stamina=state.vitals.stamina, max_stamina=state.vitals.max_stamina,
     )
