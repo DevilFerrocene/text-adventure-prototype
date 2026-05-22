@@ -11,27 +11,27 @@ class BeforeRollReactiveTest(unittest.TestCase):
     def setUp(self):
         self.assertTrue(mcp_server.start_game()["ok"])
         mcp_server.SESSION.modifiers.clear()
-        self.assertTrue(mcp_server.learn_skill("street_instinct")["ok"])
+        self.assertTrue(mcp_server.learn_skill("danger_sense")["ok"])
 
     def test_reactive_fires_on_matching_roll(self):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="察觉巷口的偷袭", sides=20)
-        self.assertEqual(rolled["total"], 16)  # 10 + 3(街头直觉) + 3(敏)
+        self.assertEqual(rolled["total"], 17)  # 10 + 3(战斗直觉) + 4(敏)
 
     def test_reactive_does_not_fire_on_unrelated_roll(self):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="撬锁", sides=20)
-        self.assertEqual(rolled["total"], 13)  # 10 + 3(敏)，reactive不匹配
+        self.assertEqual(rolled["total"], 14)  # 10 + 4(敏)，reactive不匹配
 
     def test_reactive_modifier_is_one_shot_not_stacking(self):
         # 连续两次偷袭掷骰，第二次不应叠加（用完即清）
         with patch("mcp_server.random.randint", return_value=10):
             mcp_server.roll_check(reason="偷袭预警", sides=20)
             second = mcp_server.roll_check(reason="偷袭预警", sides=20)
-        self.assertEqual(second["total"], 16)  # 仍是 +3(反应)，+3(敏)，不是 +6
+        self.assertEqual(second["total"], 17)  # 仍是 +3(反应)，+4(敏)，不是 +6
         # 池里没有残留的 reactive 修正
         self.assertFalse(any(m.source_id.startswith("reactive:") or
-                             (m.source_kind == "skill" and m.reason == "街头直觉")
+                             (m.source_kind == "skill" and m.reason == "战斗直觉")
                              for m in mcp_server.SESSION.modifiers))
 
     def test_no_infinite_recursion_with_rollcheck_recipe(self):
@@ -75,7 +75,7 @@ class SceneEnterReactiveTest(unittest.TestCase):
         # move 事件 event={"room_id","room_tags","from_room"}；_match_selector 的
         # reason_includes 读 event["reason"]，move 不提供 reason → 不会匹配。
         # 故用 room_id 作为 reason 字段验证：改造 event 不便，改测无 reason 不触发。
-        result = mcp_server.move("south")  # 进 alley
+        result = mcp_server.move("north")  # 进 雾语草原
         self.assertTrue(result["ok"])
         # 该 reactive 因 condition 不匹配 move 事件结构而不触发——验证不会误触发
         self.assertNotIn("警觉", mcp_server.SESSION.state.conditions)
@@ -91,7 +91,7 @@ class SceneEnterReactiveTest(unittest.TestCase):
             ),
         )
         mcp_server.SESSION.state.skills.append(rx)
-        result = mcp_server.move("south")
+        result = mcp_server.move("north")
         self.assertTrue(result["ok"])
         self.assertIn("reactive_fired", result)
         self.assertIn("已进入新区域", mcp_server.SESSION.state.conditions)
@@ -113,7 +113,7 @@ class TakeDamageReactiveTest(unittest.TestCase):
             ),
         )
         mcp_server.SESSION.state.skills.append(rx)
-        self.assertTrue(mcp_server.start_combat(canon=["dock_thug"])["ok"])
+        self.assertTrue(mcp_server.start_combat(canon=["frenzy_boar"])["ok"])
 
     def tearDown(self):
         if mcp_server.SESSION.in_combat:
@@ -126,7 +126,7 @@ class TakeDamageReactiveTest(unittest.TestCase):
         self.assertIn("肾上腺素飙升", mcp_server.SESSION.state.conditions)
 
     def test_enemy_taking_damage_does_not_fire_player_reactive(self):
-        result = mcp_server.deal_damage(target="enemy_dock_thug", amount=2)
+        result = mcp_server.deal_damage(target="enemy_frenzy_boar", amount=2)
         self.assertTrue(result["ok"])
         self.assertNotIn("reactive_fired", result)
 

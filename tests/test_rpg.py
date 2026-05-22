@@ -48,7 +48,7 @@ class RPGDataModelTest(unittest.TestCase):
 
     def test_old_save_compat(self):
         """旧存档缺失新字段 → load 不崩、默认值生效。"""
-        mcp_server.start_game(world="yanan")
+        mcp_server.start_game()
         state = mcp_server.SESSION.state
         # 旧存档形 vitals 反序列化（缺失 level/exp/attributes）→ 默认值
         vs = VitalStats(**{"hp": 10, "max_hp": 10, "gold": 500})
@@ -128,8 +128,9 @@ class RPGEquipmentTest(unittest.TestCase):
         self.assertEqual(mcp_server.SESSION.state.equipped.get("weapon", ""), "")
 
     def test_equip_invalid_slot(self):
-        result = mcp_server.equip(item_id="sealed_letter")
-        # 在 aincrad 中可能没有 sealed_letter
+        # 消耗品没有 equip_slot → 不可装备，应被拒
+        result = mcp_server.equip(item_id="heal_crystal")
+        self.assertFalse(result["ok"])
 
     def test_old_dmg_tag_fallback(self):
         """旧 'dmg:1d6' tag 武器仍可用。declare_intent 回退读 tag。"""

@@ -233,6 +233,57 @@ SKILLS = {
         ),
         obtained_from="npc:vera",
     ),
+    # 被动：察知 — 探索向，察觉/搜索/潜行类掷骰常驻 +2（营地教官可学）
+    "keen_senses": Skill(
+        id="keen_senses", name="察知",
+        desc="把注意力铺成一张网——草动、雾移、石缝里的反光，都逃不过你的眼睛。",
+        passive_modifiers=[
+            Modifier(
+                id="passive", source_kind="skill", source_id="keen_senses",
+                target="roll",
+                selector={"reason_includes": ["察觉", "搜索", "感知", "潜行", "侦察"]},
+                op="add", value=2, reason="察知", visible="full",
+            ),
+        ],
+        obtained_from="npc:vera",
+    ),
+    # 主动：凝神斩 — 命中向剑技（区别于垂直方斩的增伤）。扣 SP，下次攻击掷骰 +5
+    "focus_strike": Skill(
+        id="focus_strike", name="凝神斩",
+        desc="屏息半拍，把全部杀意收束到剑尖——慢一线出手，却几乎不会落空。",
+        active=ActiveSkill(
+            cost={"stamina": 2},
+            cooldown=3,
+            recipe=[
+                Step(verb="apply_buff", args={
+                    "name": "凝神·看破", "desc": "下次攻击掷骰 +5",
+                    "polarity": "buff", "target": "roll", "op": "add", "value": 5,
+                    "duration": 1, "timing": "on_check",
+                    "reason": "凝神斩", "visible": "full",
+                    "selector": {"reason_includes": ["攻击", "斩", "突刺"]},
+                }),
+                Step(verb="narrative_tag", args={"tag": "凝神"}),
+            ],
+        ),
+        obtained_from="skill_book:focus_strike",
+    ),
+    # 反应：战斗直觉 — 遭偷袭/突袭/伏击时本能预判，相关掷骰 +3（before_roll）
+    "danger_sense": Skill(
+        id="danger_sense", name="战斗直觉",
+        desc="千百场生死换来的野兽预感——刀光未起，后颈先凉。",
+        reactive=ReactiveSkill(
+            trigger="before_roll",
+            condition={"reason_includes": ["偷袭", "突袭", "伏击"]},
+            recipe=[
+                Step(verb="emit_modifier", args={
+                    "target": "roll", "op": "add", "value": 3,
+                    "reason": "战斗直觉", "visible": "full",
+                    "selector": {"reason_includes": ["偷袭", "突袭", "伏击"]},
+                }),
+            ],
+        ),
+        obtained_from="npc:vera",
+    ),
 }
 
 
@@ -265,7 +316,7 @@ def register(world: GameWorld):
         exits={"north": "plains"},
         objects=["weapon_rack", "rack_iron_sword", "rack_dagger",
                  "teleport_crystal", "skill_trainer", "campfire",
-                 "camp_merchant", "lost_scout"],
+                 "camp_merchant", "lost_scout", "coin_pouch", "field_notes"],
         area="苍穹回廊·第一层",
         zone="雾语草原·营地",
         coords=(0, 0),
@@ -372,6 +423,62 @@ def register(world: GameWorld):
     ))
 
     # ── 营地物体 ──────────────────────────────────────────────────
+    world.add_object(GameObject(
+        id="coin_pouch",
+        name="回廊币袋",
+        description=(
+            "一只磨得发亮的皮币袋，袋口用攻略组的螺旋纹铜扣束着，沉甸甸的。"
+            "里面是你目前攒下的回廊币——不过钱早记在你的身家里了（走身家账，不在这只袋子里），"
+            "袋子只是它的随身包装。烧了砸了它，账上的币一枚不少。"
+        ),
+        kind="container",
+        named_tags=["currency"],
+        traits=["money"],
+        takable=False,
+        # 金币是抽象资产（gold 走 vitals），不绑实体。袋子是叙事道具，标 indestructible，
+        # 免得一发炎刃斩把存款"烧没"——破坏它在机制上无意义（抽象资产保护）。
+        indestructible=True,
+    ))
+    world.add_object(GameObject(
+        id="field_notes",
+        name="前人攻略残页",
+        description=(
+            "几张被雨水泡皱又晒干的羊皮纸，边角焦黑——像是从某个篝火堆里抢出来的。"
+            "上面是潦草的炭笔字：第一层的怪、迷宫的陷阱、层守的出招规律，"
+            "记到一半戛然而止。最后一行字被一道暗褐色的划痕盖住了。"
+        ),
+        kind="document",
+        named_tags=["lore", "guide"],
+        traits=["readable", "fragile"],
+        takable=True,
+        hidden_clue="残页要点：层守『裂蹄牛魔王』弱点在炎，蓄力重踏前会先低头——那是破绽窗口",
+        hidden_flag="read_field_notes",
+        affordances={
+            "read": Affordance(
+                verb="read",
+                desc="借营火的光读这几页残卷",
+                effect={
+                    "flags": {"field_notes_read": True},
+                    "clues": [
+                        "残页要点：层守蓄力重踏前会先低头一瞬——那一刻它看不见脚下，"
+                        "是炎属剑技切入的最佳窗口。写到这里，字迹被一道暗褐划痕截断了。"
+                    ],
+                },
+            ),
+            "tear": Affordance(
+                verb="tear",
+                desc="把残页撕掉（不可逆）",
+                effect={"flags": {"field_notes_torn": True}},
+                consume_self=True,
+            ),
+            "burn": Affordance(
+                verb="burn",
+                desc="就着营火烧掉残页",
+                effect={"flags": {"field_notes_burned": True}},
+                consume_self=True,
+            ),
+        },
+    ))
     world.add_object(GameObject(
         id="weapon_rack",
         name="武器架",
@@ -678,13 +785,22 @@ def register(world: GameWorld):
         hp=2, max_hp=2, ac=3,
         damage_types_resist={"fire": 3.0},  # 一点就着
         on_destroyed=[{
+            "reveals_objects": ["scout_token"],   # 烧穿草丛，露出底下藏的东西
             "flags": {"grass_burned": True},
             "clues": [
                         "干燥的草秆遇火即燃，橙红的火舌沿风向席卷整片草丛，黑烟冲天。"
-                        "你听见附近传来慌乱的怪叫声——火光不只烧掉了藏身处，"
-                        "也烧掉了所有人的伪装。"
+                        "火光退去后，焦黑的草根间露出一枚被人匆忙埋下的金属牌——"
+                        "某个没能走回营地的攻略者，最后留在了这里。"
                     ],
         }],
+    ))
+    world.add_object(GameObject(
+        id="scout_token",
+        name="烧焦的身份牌",
+        description="一枚边缘被火燎黑的金属攻略者牌，正面刻着回廊攻略组的螺旋徽记和一个已看不清的名字。背面用小刀划了一道——大概是某次侥幸生还后给自己记的功。它的主人没能再划第二道。",
+        kind="trace", hidden=True, takable=True,
+        traits=["keepsake", "evidence"],
+        named_tags=["fallen_scout"],
     ))
 
     # ── 平原支线物品 ──

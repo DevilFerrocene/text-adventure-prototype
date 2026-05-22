@@ -5,7 +5,7 @@
   - 双层世界状态（Canon + Improvised，路线七）
   - WorldCanon 世界观锚句
   - 7 关 improvised 验证
-  - yanan 单世界支持
+  - aincrad（苍穹回廊）单世界支持
 
 工具：
   start_game(world)   启动游戏，重置状态
@@ -56,7 +56,6 @@ from core.types import (
     exp_to_reach, HP_PER_LEVEL, HP_PER_HPGROWTH, CHAR_XP_BY_ARCHETYPE,
 )
 from runtime.game_world import GameWorld
-import content.yanan as yanan_module
 import content.aincrad as aincrad_module
 
 
@@ -66,7 +65,6 @@ SAVE_DIR = _HERE / "saves"
 SAVE_DIR.mkdir(exist_ok=True)
 
 WORLDS = {
-    "yanan": yanan_module,
     "aincrad": aincrad_module,
 }
 
@@ -705,11 +703,11 @@ def _apply_effect(effect: dict, state: GameState, world: GameWorld) -> dict | No
 # ── MCP Tools ─────────────────────────────────────────────────────
 
 @mcp.tool()
-def start_game(world: str = "yanan") -> dict:
+def start_game(world: str = "aincrad") -> dict:
     """启动一局新游戏。
 
     Args:
-        world: 世界名称。当前仅支持 yanan（默认）
+        world: 世界名称。当前仅支持 aincrad（苍穹回廊，默认）
     """
     global SESSION
 
@@ -808,10 +806,10 @@ def reset_game(world: str = "") -> dict:
     只清自动存档，避免下次启动又恢复到旧进度。
 
     Args:
-        world: 重开哪个世界。空=沿用当前世界（无进行中游戏则默认 yanan）。
+        world: 重开哪个世界。空=沿用当前世界（无进行中游戏则默认 aincrad）。
     """
     # 1. 决定目标世界（先校验，避免无效世界时已删档）
-    target = world or (SESSION.world_name if SESSION.started else "yanan")
+    target = world or (SESSION.world_name if SESSION.started else "aincrad")
     if target not in WORLDS:
         return {"ok": False, "error": f"未知世界 {target!r}，可用: {list(WORLDS.keys())}"}
 
@@ -4364,7 +4362,7 @@ def _session_from_data(data: dict) -> Optional[Session]:
 
     load_game 和启动自恢复（_maybe_restore_autosave）共用，保证两条路径一致。
     """
-    world_name = data.get("world", "yanan")
+    world_name = data.get("world", "aincrad")
     if world_name not in WORLDS:
         return None
 

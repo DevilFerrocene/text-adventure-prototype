@@ -101,16 +101,19 @@ class RestoreTest(unittest.TestCase):
         self.assertIn("start_game", r["error"])
 
     def test_new_game_overwrites_old_autosave(self):
-        # 玩 aincrad 到一半 → 新开 yanan → autosave 应是 yanan 而非旧 aincrad
+        # 玩到草原 → 重新开局 → autosave 应是新局(camp)而非旧进度(plains)
         mcp_server.start_game("aincrad")
-        mcp_server.move("north")
-        mcp_server.start_game("yanan")
+        mcp_server.move("north")  # plains
         data = json.loads(_autosave_path().read_text(encoding="utf-8"))
-        self.assertEqual(data["world"], "yanan")
-        self.assertEqual(data["position"], "apartment")
-        # 重启后恢复到 yanan
+        self.assertEqual(data["position"], "plains")
+        mcp_server.start_game("aincrad")  # 重开新局
+        data2 = json.loads(_autosave_path().read_text(encoding="utf-8"))
+        self.assertEqual(data2["world"], "aincrad")
+        self.assertEqual(data2["position"], "camp")
+        # 重启后恢复到新局起点
         _simulate_process_restart()
-        self.assertEqual(mcp_server.SESSION.world_name, "yanan")
+        self.assertEqual(mcp_server.SESSION.world_name, "aincrad")
+        self.assertEqual(mcp_server.SESSION.state.position, "camp")
 
 
 class ResetGameTest(unittest.TestCase):
@@ -152,9 +155,9 @@ class ResetGameTest(unittest.TestCase):
 
     def test_reset_to_specified_world(self):
         mcp_server.start_game("aincrad")
-        r = mcp_server.reset_game("yanan")
+        r = mcp_server.reset_game("aincrad")   # 显式指定世界的路径仍生效
         self.assertTrue(r["ok"])
-        self.assertEqual(mcp_server.SESSION.world_name, "yanan")
+        self.assertEqual(mcp_server.SESSION.world_name, "aincrad")
 
     def test_reset_invalid_world_rejected(self):
         mcp_server.start_game("aincrad")

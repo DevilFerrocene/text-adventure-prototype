@@ -58,19 +58,19 @@ class DealDamageExplorationTest(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game()["ok"])
-        # 走到巷子（牛粪堆所在房间）
-        self.assertTrue(mcp_server.move("south")["ok"])
+        # 走到雾语草原（高草丛所在房间）
+        self.assertTrue(mcp_server.move("north")["ok"])
 
-    def test_destroying_dung_heap_reveals_hidden_token(self):
+    def test_destroying_tall_grass_reveals_hidden_token(self):
         # 炸前：token 隐藏，不在场景
         scene_before = mcp_server.get_scene()["scene"]
         ids_before = {o["id"] for o in scene_before["objects"]}
-        self.assertIn("dung_heap", ids_before)
-        self.assertNotIn("rusted_token", ids_before)
+        self.assertIn("tall_grass", ids_before)
+        self.assertNotIn("scout_token", ids_before)
 
         result = mcp_server.deal_damage(
-            target="dung_heap", amount=5, damage_type="fire",
-            reason="鞭炮炸牛粪堆",
+            target="tall_grass", amount=5, damage_type="fire",
+            reason="炎刃斩点燃草丛",
         )
         self.assertTrue(result["ok"])
         self.assertEqual(result["context"], "exploration")
@@ -78,31 +78,31 @@ class DealDamageExplorationTest(unittest.TestCase):
 
         # on_destroyed 产出：揭示 token + 置 flag + 加线索
         od = result["on_destroyed"]
-        self.assertIn("rusted_token", od["revealed"])
-        self.assertTrue(od["effects"]["flags_set"]["dung_heap_destroyed"])
+        self.assertIn("scout_token", od["revealed"])
+        self.assertTrue(od["effects"]["flags_set"]["grass_burned"])
 
         # 场景：牛粪堆没了，token 现身且可拾取
         ids_after = {o["id"] for o in result["scene"]["objects"]}
-        self.assertNotIn("dung_heap", ids_after)
-        self.assertIn("rusted_token", ids_after)
+        self.assertNotIn("tall_grass", ids_after)
+        self.assertIn("scout_token", ids_after)
 
         # 揭示的 token 真能拿走
-        take = mcp_server.take_item("rusted_token")
+        take = mcp_server.take_item("scout_token")
         self.assertTrue(take["ok"])
 
     def test_indestructible_target_rejected(self):
         # 把石板路标成坚不可摧，确认被拒
-        mcp_server.SESSION.world.get_object("wet_cobblestone").indestructible = True
-        result = mcp_server.deal_damage(target="wet_cobblestone", amount=5)
+        mcp_server.SESSION.world.get_object("mist_shrine").indestructible = True
+        result = mcp_server.deal_damage(target="mist_shrine", amount=5)
         self.assertFalse(result["ok"])
         self.assertIn("坚不可摧", result["error"])
 
     def test_money_bag_is_protected_and_gold_untouched(self):
-        # 钱是抽象 vitals 资产，coin_bag 是叙事道具——炸它应被拒，gold 不变。
+        # 钱是抽象 vitals 资产，coin_pouch 是叙事道具——炸它应被拒，gold 不变。
         # （见会话记录：防止"火球烧没五万金币"这类散文/引擎脱节）
-        mcp_server.start_game()  # 回到公寓，coin_bag 在场
+        mcp_server.start_game()  # 回到营地，coin_pouch 在场
         gold_before = mcp_server.SESSION.state.vitals.gold
-        result = mcp_server.deal_damage(target="coin_bag", amount=100, damage_type="fire")
+        result = mcp_server.deal_damage(target="coin_pouch", amount=100, damage_type="fire")
         self.assertFalse(result["ok"])
         self.assertIn("坚不可摧", result["error"])
         self.assertEqual(mcp_server.SESSION.state.vitals.gold, gold_before)
@@ -112,12 +112,12 @@ class DealDamageExplorationTest(unittest.TestCase):
         self.assertFalse(result["ok"])
 
     def test_target_not_in_room_rejected(self):
-        # dwarf_bartender 在酒馆，不在当前巷子
-        result = mcp_server.deal_damage(target="dwarf_bartender", amount=3)
+        # weapon_rack 在营地，不在当前草原
+        result = mcp_server.deal_damage(target="weapon_rack", amount=3)
         self.assertFalse(result["ok"])
 
     def test_nonpositive_amount_rejected(self):
-        result = mcp_server.deal_damage(target="dung_heap", amount=0)
+        result = mcp_server.deal_damage(target="tall_grass", amount=0)
         self.assertFalse(result["ok"])
 
     def test_destroying_inventory_item_removes_it_from_inventory(self):
@@ -144,7 +144,7 @@ class DealDamageCombatTest(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game()["ok"])
-        self.assertTrue(mcp_server.start_combat(canon=["dock_thug"])["ok"])
+        self.assertTrue(mcp_server.start_combat(canon=["frenzy_boar"])["ok"])
 
     def tearDown(self):
         if mcp_server.SESSION.in_combat:
@@ -152,24 +152,24 @@ class DealDamageCombatTest(unittest.TestCase):
 
     def test_deal_damage_to_combatant_in_combat(self):
         result = mcp_server.deal_damage(
-            target="enemy_dock_thug", amount=3, damage_type="blunt",
+            target="enemy_frenzy_boar", amount=3, damage_type="blunt",
             reason="环境伤害：塌落的横梁",
         )
         self.assertTrue(result["ok"])
         self.assertEqual(result["context"], "combat")
-        thug = mcp_server.SESSION.encounter.combatants["enemy_dock_thug"]
+        thug = mcp_server.SESSION.encounter.combatants["enemy_frenzy_boar"]
         self.assertEqual(thug.hp, thug.max_hp - 3)
 
     def test_lethal_damage_marks_combatant_dead(self):
-        thug = mcp_server.SESSION.encounter.combatants["enemy_dock_thug"]
-        result = mcp_server.deal_damage(target="enemy_dock_thug", amount=999)
+        thug = mcp_server.SESSION.encounter.combatants["enemy_frenzy_boar"]
+        result = mcp_server.deal_damage(target="enemy_frenzy_boar", amount=999)
         self.assertTrue(result["ok"])
         self.assertTrue(result["destroyed"])
         self.assertTrue(thug.is_dead)
 
     def test_cannot_damage_already_dead(self):
-        mcp_server.deal_damage(target="enemy_dock_thug", amount=999)
-        again = mcp_server.deal_damage(target="enemy_dock_thug", amount=5)
+        mcp_server.deal_damage(target="enemy_frenzy_boar", amount=999)
+        again = mcp_server.deal_damage(target="enemy_frenzy_boar", amount=5)
         self.assertFalse(again["ok"])
 
 

@@ -57,7 +57,7 @@ class BuffEngineTest(unittest.TestCase):
             target="roll", op="add", value=-1, duration=2,
         )["ok"])
         # advance a turn so the per-turn gate resets, isolating the dup-name gate
-        mcp_server.inspect_object("cracked_window")
+        mcp_server.inspect_object("teleport_crystal")
         dup = mcp_server.add_improvised_buff(
             name="湿冷", desc="", polarity="debuff",
             target="roll", op="add", value=-1, duration=2,
@@ -75,7 +75,7 @@ class BuffEngineTest(unittest.TestCase):
         with patch("mcp_server.random.randint", return_value=10):
             rolled = mcp_server.roll_check(reason="撬锁", sides=20)
         self.assertEqual(rolled["raw"], 10)
-        self.assertEqual(rolled["total"], 16)  # 10 + 3(on_check buff) + 3(敏)
+        self.assertEqual(rolled["total"], 17)  # 10 + 3(on_check buff) + 4(敏)
 
     # ── turn_end hp buff 直接改 hp + 回合过期 ─────────────────────
 
@@ -85,7 +85,7 @@ class BuffEngineTest(unittest.TestCase):
             target="roll", op="add", value=2, duration=1, timing="on_check",
         )["ok"])
         # one narrative turn ticks expiry (duration=1 → expires this turn)
-        mcp_server.inspect_object("cracked_window")
+        mcp_server.inspect_object("teleport_crystal")
         buffs = mcp_server.get_state()["buffs"]
         self.assertFalse(any(b["name"] == "短暂祝福" for b in buffs))
 

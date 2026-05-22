@@ -1,7 +1,7 @@
 """苍穹回廊（aincrad）新世界骨架回归测试。
 
 锁住机制（世界可启动、房间可达、怪物可战、属性克制、三类技能、攻略主线），
-不测叙事文案（desc 多为 TODO）。同时确认多世界共存（不影响 yanan）。
+不测叙事文案（desc 多为 TODO）。
 """
 import unittest
 from unittest.mock import patch
@@ -190,22 +190,43 @@ class LabyrinthAndQuestTest(unittest.TestCase):
         self.assertEqual(r["rank_after"], 2)
 
 
-class MultiWorldCoexistenceTest(unittest.TestCase):
-    """两个世界共存：切换不串味，各自独立。"""
-
-    def test_can_switch_between_worlds(self):
-        self.assertTrue(mcp_server.start_game("yanan")["ok"])
-        self.assertEqual(mcp_server.SESSION.state.position, "apartment")
-        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
-        self.assertEqual(mcp_server.SESSION.state.position, "camp")
-        # aincrad 的敌人不在 yanan
-        self.assertTrue(mcp_server.start_game("yanan")["ok"])
-        self.assertIsNone(mcp_server.SESSION.world.get_enemy("warden_gorehoof"))
-        self.assertIsNotNone(mcp_server.SESSION.world.get_enemy("dock_thug"))
+class WorldRegistryTest(unittest.TestCase):
+    """世界注册：未知世界被拒。"""
 
     def test_unknown_world_rejected(self):
         r = mcp_server.start_game("no_such_world")
         self.assertFalse(r["ok"])
+
+
+class GmAdjudicationTest(unittest.TestCase):
+    """GM 裁定权：gm_set_flag 兜底预设外的创意解法（aincrad 迷宫符文门）。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+        mcp_server.SESSION.state.position = "labyrinth"
+
+    def test_gm_set_flag_unlocks_locked_exit(self):
+        # 迷宫北门默认锁在 labyrinth_cleared 之后
+        self.assertIn("north", mcp_server.SESSION.world.get_room("labyrinth").locked_exits)
+        r = mcp_server.gm_set_flag("labyrinth_cleared", True, unlock_exit="north")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["unlocked_exit"], "north")
+        self.assertTrue(mcp_server.SESSION.state.flags.get("labyrinth_cleared"))
+        self.assertNotIn("north", mcp_server.SESSION.world.get_room("labyrinth").locked_exits)
+        # 解锁后玩家真能走进首领之间
+        moved = mcp_server.move("north")
+        self.assertTrue(moved["ok"])
+        self.assertEqual(mcp_server.SESSION.state.position, "warden_gate")
+
+    def test_gm_set_flag_without_unlock(self):
+        r = mcp_server.gm_set_flag("some_story_flag", True)
+        self.assertTrue(r["ok"])
+        self.assertTrue(mcp_server.SESSION.state.flags.get("some_story_flag"))
+
+    def test_gm_set_flag_nonexistent_exit_notes_gracefully(self):
+        r = mcp_server.gm_set_flag("x", True, unlock_exit="down")
+        self.assertTrue(r["ok"])
+        self.assertIn("unlock_note", r)  # 优雅提示，不报错
 
 
 if __name__ == "__main__":
