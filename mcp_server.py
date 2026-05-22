@@ -1571,7 +1571,12 @@ def call_affordance(object_id: str, verb: str) -> dict:
         canon_ids = sc.get("canon", [])
         imp_list = sc.get("improvised", [])
         initiative = sc.get("initiative_advantage", "")
-        start_result = start_combat(canon=canon_ids, improvised=imp_list)
+        start_result = start_combat(
+            canon=canon_ids, improvised=imp_list,
+            tactical=sc.get("tactical", False),
+            rank_depth=sc.get("rank_depth", 2),
+            player_rank=sc.get("player_rank", 0),
+        )
         if start_result.get("ok"):
             combat_started = start_result["encounter"]
             changes["combat_started"] = True
@@ -2413,6 +2418,9 @@ def _build_enemy_from_template(tmpl: EnemyTemplate, suffix: str = "") -> Combata
         behavior_profile=tmpl.behavior_profile,
         skills=list(tmpl.skills),
         archetype=tmpl.archetype,
+        # §14：模板自带的战术站位（tactical 战斗才有意义；非战术战斗这些值无害）
+        # poise 从 0 起累积削韧，到 max_poise 触发破防（破防结算待 R4，B 阶段仅占位）
+        rank=tmpl.rank, reach=tmpl.reach, max_poise=tmpl.max_poise,
     )
 
 
@@ -2600,6 +2608,8 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None,
             count += 1
             ec = _build_enemy_from_template(tmpl, suffix=f"_{count}")
             cid = ec.id
+        if tactical:   # §14：把模板的 rank 钳进本场列阵档数
+            ec.rank = max(0, min(rank_depth - 1, ec.rank))
         combatants[cid] = ec
 
     # ── Improvised enemies ──

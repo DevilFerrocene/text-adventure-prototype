@@ -229,5 +229,61 @@ class GmAdjudicationTest(unittest.TestCase):
         self.assertIn("unlock_note", r)  # 优雅提示，不报错
 
 
+class TacticalBossFightTest(unittest.TestCase):
+    """§14-B：裂蹄殿首领战是战术战斗——前排近战牛魔王 + 后排远程巫祝。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+        mcp_server.SESSION.state.position = "warden_gate"
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="test cleanup")
+
+    def _start_fight(self):
+        r = mcp_server.call_affordance("warden_arena", "challenge")
+        self.assertTrue(r["ok"])
+        self.assertTrue(mcp_server.SESSION.in_combat)
+        return mcp_server.SESSION.encounter
+
+    def test_arena_spawns_tactical_with_positions(self):
+        enc = self._start_fight()
+        self.assertTrue(enc.action_economy)              # 行动经济开
+        boss = enc.combatants["enemy_warden_gorehoof"]
+        shaman = enc.combatants["enemy_horn_shaman"]
+        self.assertEqual((boss.rank, boss.reach), (0, 1))     # 前排近战
+        self.assertEqual(boss.max_poise, 12)                  # 破防条（R4 用）
+        self.assertEqual((shaman.rank, shaman.reach), (1, 99))  # 后排远程
+
+    def test_melee_cannot_reach_backline_shaman(self):
+        self._start_fight()
+        mcp_server.equip("iron_sword")  # 近战 reach 1
+        r = mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_horn_shaman")
+        self.assertFalse(r["ok"])
+        self.assertIn("触及范围外", r["error"])
+
+    def test_melee_reaches_front_boss(self):
+        self._start_fight()
+        mcp_server.equip("iron_sword")
+        r = mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_warden_gorehoof")
+        self.assertTrue(r["ok"])
+        # 行动经济：大动用掉，回合仍在玩家（还有小动）
+        self.assertEqual(r["next_actor"], "player")
+        self.assertEqual(r["actions_left"], {"major": False, "minor": True})
+
+    def test_ranged_staff_reaches_backline_shaman(self):
+        from core.types import InventoryItem
+        # 远程 build：辉石杖 reach 99，能点后排
+        staff = mcp_server.SESSION.world.get_object("cave_glow_staff")
+        mcp_server.SESSION.state.add_item(InventoryItem.from_object(staff))
+        self._start_fight()
+        r = mcp_server.declare_intent(
+            actor="player", intent="attack",
+            target="enemy_horn_shaman", weapon="cave_glow_staff")
+        self.assertTrue(r["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

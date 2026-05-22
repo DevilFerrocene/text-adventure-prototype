@@ -691,6 +691,10 @@ class EnemyTemplate:
     skills: list[str] = field(default_factory=list)
     loot: list[str] = field(default_factory=list)
     flavor: str = ""
+    # §14 战术站位（仅 tactical 战斗生效；默认 rank0/reach99/无破防条=旧行为）
+    rank: int = 0                   # 列阵位：0=最前排
+    reach: int = 99                 # 触及排数（近战=1，长柄=2，远程/法术=99）
+    max_poise: int = 0              # 破防阈值（精英/首领设>0；0=无破防条）
 
 
 @dataclass

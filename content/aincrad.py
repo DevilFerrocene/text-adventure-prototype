@@ -72,7 +72,7 @@ ENEMIES = {
             "不能移动，但这不代表它无害。它的寒雾花粉会让你的剑变慢，然后是你的腿。"
         ),
     ),
-    # 第一层首领：雾语草原的霸主
+    # 第一层首领：雾语草原的霸主（§14 战术：前排近战重锤 + 破防条）
     "warden_gorehoof": EnemyTemplate(
         id="warden_gorehoof", name="层守·裂蹄牛魔王",
         archetype="boss", hp=24, max_hp=24, ac=12, speed=9,
@@ -80,10 +80,27 @@ ENEMIES = {
         behavior_profile="aggressive", skills=[],
         damage_types_resist={"fire": 1.5, "frost": 0.5},  # 弱炎、抗霜
         loot=["warden_horn", "floor_2_key"],
+        rank=0, reach=1, max_poise=12,   # 前排冲撞，触及仅前排；破防条 12（待 R4 结算）
         flavor=(
             "肩高两米的牛头巨兽，断角上缠着历代挑战者留下的碎布。蹄子每踏一步，"
             "石殿地砖就多一道白茬裂痕。最可畏的是它的沉默——不像杂兵那样嘶吼，"
             "只是缓慢地、笃定地朝你走来。弱点在炎属剑技。"
+        ),
+    ),
+    # 首领的后排援护：角鸣巫祝——站在牛魔王身后吹响骨角，从远处降下寒雾
+    "horn_shaman": EnemyTemplate(
+        id="horn_shaman", name="角鸣巫祝",
+        archetype="caster_low", hp=6, max_hp=6, ac=11, speed=8,
+        damage_expr="1d4+1", damage_type="frost",
+        behavior_profile="opportunist", skills=[],
+        damage_types_resist={"fire": 2.0},  # 极惧火（炎属剑技/法术速杀）
+        loot=["shaman_horn"],
+        rank=1, reach=99,   # §14：后排远程——近战 build 够不到，得用远程或绕位
+        flavor=(
+            "披着牛皮、头戴弯角骨冠的瘦小身影，缩在牛魔王巨大的阴影里。"
+            "它不近身——只是把一支磨得发亮的骨角举到唇边，每一次低沉的呜鸣，"
+            "都让殿中的温度跌下一截，寒雾顺着地缝朝你的脚踝爬来。"
+            "想让牛魔王少一只帮凶，先得够得着躲在后面的它。"
         ),
     ),
     # 迷宫暗影虫
@@ -108,6 +125,8 @@ ENEMIES = {
         behavior_profile="aggressive", skills=[],
         damage_types_resist={"fire": 0.5},
         loot=["guard_crest"],
+        rank=0, reach=2, max_poise=6,   # §14：长柄战斧——前排，触及可及中排；精英破防条
+
         flavor=(
             "身披锈铁胸甲的牛头战士，长柄战斧的斧刃上有暗褐色的旧渍——"
             "那是之前叩门者的血。它不巡逻，只是站在首领殿前的甬道正中，像一座活雕像。"
@@ -515,7 +534,7 @@ def register(world: GameWorld):
         kind="tool", hidden=True, takable=True,
         traits=["weapon", "slash"],
         equip_slot="weapon", damage_expr="1d6", damage_type="slash",
-        scaling={"str": 1.0},
+        scaling={"str": 1.0}, reach=1,
     ))
     world.add_object(GameObject(
         id="rack_dagger",
@@ -524,7 +543,7 @@ def register(world: GameWorld):
         kind="tool", hidden=True, takable=True,
         traits=["weapon", "pierce", "dex"],
         equip_slot="weapon", damage_expr="1d4", damage_type="pierce",
-        scaling={"dex": 1.0},  # 匕首：纯敏，刺杀吃敏捷
+        scaling={"dex": 1.0}, reach=1,  # 匕首：纯敏，刺杀吃敏捷；近战触及
     ))
 
     # ── 营地商人 ──
@@ -582,6 +601,7 @@ def register(world: GameWorld):
         damage_expr="1d8",
         damage_type="slash",
         scaling={"str": 1.0, "dex": 1.0},  # 直剑：力敏双修
+        reach=1,
     ))
     world.add_object(GameObject(
         id="shop_leather_vest",
@@ -641,7 +661,7 @@ def register(world: GameWorld):
         kind="tool", hidden=True, takable=True,
         traits=["weapon", "pierce", "dex", "quest_reward"],
         equip_slot="weapon", damage_expr="1d4+1", damage_type="pierce",
-        scaling={"dex": 1.0},  # 精良匕首：纯敏
+        scaling={"dex": 1.0}, reach=1,  # 精良匕首：纯敏；近战触及
     ))
 
     world.add_object(GameObject(
@@ -951,11 +971,18 @@ def register(world: GameWorld):
                     "flags": {"warden_fight_started": True},
                     "clues": [
                         "你的脚步踏入圆形战场的边缘，靴跟磕在石面上发出一声清脆的响。"
-                        "殿深处的呼吸停了一拍。然后两根弯曲的巨角从暗中缓缓低下来，"
-                        "一双赤红的眼睛在角根处亮起——裂蹄牛魔王已经醒了。"
-                        "它用沉默回答了你的挑战。首领战开始。"
+                        "殿深处的呼吸停了一拍。两根弯曲的巨角从暗中缓缓低下来，"
+                        "一双赤红的眼睛在角根处亮起——裂蹄牛魔王踏前一步，挡在你与去路之间。"
+                        "它身后的阴影里，一声低沉的骨角呜鸣响起，殿中温度骤降：角鸣巫祝"
+                        "缩在牛魔王背后，不打算靠近，只管从远处往你身上浇寒雾。"
+                        "想让它闭嘴，你的剑得先够得着它。首领战开始。"
                     ],
-                    "start_combat": {"canon": ["warden_gorehoof"]},
+                    # §14 战术首领战：牛魔王前排近战(reach1)，巫祝后排远程(reach99)。
+                    # 近战 build 够不到后排巫祝→得用远程(辉石杖)或走位绕；模板自带 rank/reach。
+                    "start_combat": {
+                        "canon": ["warden_gorehoof", "horn_shaman"],
+                        "tactical": True, "rank_depth": 2, "player_rank": 0,
+                    },
                 },
             ),
         },
@@ -1000,9 +1027,10 @@ def register(world: GameWorld):
         name="辉石杖",
         description="一根由发光洞壁凿下的石杖，杖头嵌着一颗不灭的青色辉石。握在手里能感到轻微的魔力脉动——它不是武器，是法器。智为主、力为辅。",
         kind="tool", hidden=True, takable=True,
-        traits=["weapon", "arcane", "quality"],
+        traits=["weapon", "arcane", "quality", "ranged"],
         equip_slot="weapon", damage_expr="1d6", damage_type="arcane",
         scaling={"int": 1.0, "str": 0.5},  # 辉石杖：智为主、力为辅（混属性带权重）
+        reach=99,   # §14：法器远程，能点后排——战术战斗里近战 build 的破局答案
     ))
     world.add_object(GameObject(
         id="cave_heal_crystal",
@@ -1079,6 +1107,7 @@ def register(world: GameWorld):
             damage_type="slash",
             scaling={"str": 1.0, "dex": 1.0},  # 直剑：力敏双修
             defense=0,
+            reach=1,            # §14：单手剑近战，只够打前排
         ),
         InventoryItem(
             id="leather_vest",
