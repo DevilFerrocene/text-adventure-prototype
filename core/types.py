@@ -224,6 +224,7 @@ class InventoryItem:
     resist: dict = field(default_factory=dict)       # {"fire":0.5}
     attr_bonus: dict = field(default_factory=dict)   # {attr_key: +N}
     use_effect: dict = field(default_factory=dict)   # 消耗品效果，如 {"heal":10,"restore_sp":3}
+    reach: int = 99                 # §14：武器触及排数（近战刀=1，长柄=2，弓/法杖=99）
 
     @classmethod
     def from_object(cls, obj: "GameObject") -> "InventoryItem":
@@ -243,6 +244,7 @@ class InventoryItem:
             resist=dict(obj.resist),
             attr_bonus=dict(obj.attr_bonus),
             use_effect=dict(obj.use_effect),
+            reach=obj.reach,
         )
 
 
@@ -485,6 +487,7 @@ class GameObject:
     resist: dict = field(default_factory=dict)       # 护甲属性减伤 {"fire":0.5}
     attr_bonus: dict = field(default_factory=dict)   # 属性加成 {attr_key:+N}
     use_effect: dict = field(default_factory=dict)   # 消耗品效果 {"heal":10,"restore_sp":3}
+    reach: int = 99                 # §14：武器触及排数（近战=1/长柄=2/远程=99）
 
 
 # ── §11 RPG 数值骨架：RuleBook + 常量 ────────────────────────────

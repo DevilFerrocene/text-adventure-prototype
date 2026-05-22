@@ -255,5 +255,71 @@ class ActionEconomyTest(unittest.TestCase):
         self.assertTrue(r["ok"])
 
 
+class TacticalSetupTest(unittest.TestCase):
+    """§14-R2：GM 凭工具自编战术战斗（start_combat tactical 参数 + 武器 reach）。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game()["ok"])
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="test cleanup")
+
+    def test_start_combat_tactical_sets_ranks_and_economy(self):
+        res = mcp_server.start_combat(
+            improvised=[
+                {"name": "打手", "archetype": "brute_mid", "rank": 0, "reach": 1},
+                {"name": "弓手", "archetype": "scout", "rank": 1, "reach": 99,
+                 "max_poise": 8},
+            ],
+            tactical=True, rank_depth=2, player_rank=0,
+        )
+        self.assertTrue(res["ok"])
+        enc = mcp_server.SESSION.encounter
+        self.assertTrue(enc.action_economy)
+        self.assertEqual(enc.rank_depth, 2)
+        ranks = {c.name: c.rank for c in enc.combatants.values()}
+        self.assertEqual(ranks["打手"], 0)
+        self.assertEqual(ranks["弓手"], 1)
+        # 快照在战术模式下暴露排位 + 行动经济
+        snap = res["encounter"]
+        self.assertTrue(snap.get("action_economy"))
+        self.assertIn("actions_left", snap)
+        archer = next(c for c in snap["combatants"] if c["name"] == "弓手")
+        self.assertEqual(archer["rank"], 1)
+        self.assertEqual(archer["max_poise"], 8)
+
+    def test_weapon_reach_gates_then_ranged_reaches(self):
+        from core.types import InventoryItem
+        st = mcp_server.SESSION.state
+        st.add_item(InventoryItem(id="dagger", name="匕首", kind="weapon",
+                                  equip_slot="weapon", damage_expr="1d4", reach=1))
+        st.add_item(InventoryItem(id="sling", name="投石索", kind="weapon",
+                                  equip_slot="weapon", damage_expr="1d4", reach=99))
+        mcp_server.equip("dagger")
+        mcp_server.start_combat(
+            improvised=[{"name": "弓手", "archetype": "scout", "rank": 1, "reach": 99}],
+            tactical=True, rank_depth=2, player_rank=0,
+        )
+        archer = next(c.id for c in mcp_server.SESSION.encounter.combatants.values()
+                      if c.side == "enemy")
+        # 匕首 reach=1，后排弓手 gap=0+1=1 ≥ 1 → 触及不到
+        r1 = mcp_server.declare_intent(
+            actor="player", intent="attack", target=archer, weapon="dagger")
+        self.assertFalse(r1["ok"])
+        self.assertIn("触及范围外", r1["error"])
+        # 投石索 reach=99 → 同样排位，够得到
+        r2 = mcp_server.declare_intent(
+            actor="player", intent="attack", target=archer, weapon="sling")
+        self.assertTrue(r2["ok"])
+
+    def test_non_tactical_combat_snapshot_omits_ranks(self):
+        # tactical=False（默认）→ 快照不塞排位/行动经济，旧前端零负担
+        res = mcp_server.start_combat(canon=["dock_thug"])
+        snap = res["encounter"]
+        self.assertNotIn("action_economy", snap)
+        self.assertNotIn("rank", snap["combatants"][0])
+
+
 if __name__ == "__main__":
     unittest.main()

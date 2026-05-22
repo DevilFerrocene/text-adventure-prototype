@@ -2455,16 +2455,25 @@ def _encounter_snapshot() -> dict:
         return {"active": False}
     combatants = []
     for cid, c in enc.combatants.items():
-        combatants.append({
+        entry = {
             "id": c.id, "name": c.name, "side": c.side,
             "hp": c.hp, "max_hp": c.max_hp, "ac": c.ac,
             "is_dead": c.is_dead,
-        })
+        }
+        # §14：战术模式才暴露排位/触及/破防，避免非战术战斗多塞 token
+        if enc.action_economy:
+            entry["rank"] = c.rank
+            entry["reach"] = c.reach
+            if c.max_poise > 0:
+                entry["poise"] = c.poise
+                entry["max_poise"] = c.max_poise
+                entry["staggered"] = c.staggered
+        combatants.append(entry)
     active = enc.turn_order[enc.active_idx] if enc.turn_order and enc.active_idx < len(enc.turn_order) else "?"
     recent = []
     for ev in enc.log[-6:]:
         recent.append({"kind": ev.kind, "actor": ev.actor, "target": ev.target, "detail": ev.detail})
-    return {
+    snap = {
         "active": True,
         "id": enc.id,
         "round": enc.round,
@@ -2474,6 +2483,15 @@ def _encounter_snapshot() -> dict:
         "recent_events": recent,
         "combat_hud": _build_combat_hud(enc),
     }
+    # §14-R2：战术模式额外暴露行动经济，让 GM 知道列阵规模 + 当前行动者剩余动作槽
+    if enc.action_economy:
+        snap["action_economy"] = True
+        snap["rank_depth"] = enc.rank_depth
+        ac = enc.combatants.get(active)
+        if ac is not None:
+            snap["actions_left"] = {"major": not ac.acted_major,
+                                    "minor": not ac.acted_minor}
+    return snap
 
 
 def _write_combat_log(events: list, enc: Encounter, source: str):
@@ -2531,16 +2549,28 @@ def _enemy_profiles_for_scene(state: GameState) -> list:
 # ── 战斗 MCP 工具 ────────────────────────────────────────────────
 
 @mcp.tool()
-def start_combat(canon: list[str] = None, improvised: list[dict] = None) -> dict:
+def start_combat(canon: list[str] = None, improvised: list[dict] = None,
+                 tactical: bool = False, rank_depth: int = 2,
+                 player_rank: int = 0) -> dict:
     """开始一场战斗遭遇。
 
     Args:
         canon: 引用 content/<world>.py 中 ENEMIES 表的 id 列表，例 ["dock_thug"]
-        improvised: [{name, archetype, count}] 列表，通过 archetype 表生成敌人
-                    例 [{"name":"醉汉","archetype":"brute_low","count":1}]
+        improvised: [{name, archetype, count}] 列表，通过 archetype 表生成敌人。
+                    §14 战术字段（可选）：rank（列阵位，0=最前）、reach（触及排数）、
+                    max_poise（破防阈值，0=无）。例
+                    [{"name":"弓手","archetype":"scout","count":1,"rank":1,"reach":99}]
+        tactical: True=开行动经济（每回合 1 大动 + 1 小动）+ reach/排位门控生效；
+                  False（默认）=旧"一动即过"，rank/reach 不约束（向后兼容）。
+        rank_depth: 战术模式每方列阵档数（2=前/后，3=前/中/后）。
+        player_rank: 玩家初始列阵位（默认 0=前排）。
 
     MCP 自动把玩家从 GameState 投影成 Combatant，roll initiative。
     返回 encounter 快照 + 谁先动。
+
+    GM 用法（运行时自编一场战术战斗）：spawn 敌人时给 rank/reach → 开 tactical=True
+    → 玩家手持近战(reach 小)只能打前排、远程武器(reach 大)能点后排、move 改自身排位。
+    "算得清"：触及由武器 reach + 双方排位决定，不靠 GM 口述裁定。
     """
     if err := _require_started():
         return err
@@ -2555,6 +2585,8 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None) -> dict
 
     # ── Player ──
     player = _build_player_combatant(state)
+    if tactical:
+        player.rank = max(0, min(rank_depth - 1, player_rank))
     combatants["player"] = player
 
     # ── Canon enemies ──
@@ -2584,6 +2616,13 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None) -> dict
             suffix = f"_{i + 1}" if count > 1 else ""
             ec = _build_enemy_from_archetype(name, archetype_key, suffix)
             if ec:
+                # §14 战术字段：spawn 时即定排位/触及/破防条（GM 自编战术战斗用）
+                if "rank" in imp:
+                    ec.rank = max(0, min(rank_depth - 1, int(imp["rank"])))
+                if "reach" in imp:
+                    ec.reach = int(imp["reach"])
+                if "max_poise" in imp:
+                    ec.max_poise = int(imp["max_poise"])
                 # dedup id
                 cid = ec.id
                 n = 1
@@ -2602,7 +2641,8 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None) -> dict
     # ── Build Encounter ──
     enc_id = f"enc_{state.turn}_{len(canon) + sum(i.get('count', 1) for i in improvised)}"
     enc = Encounter(id=enc_id, combatants=combatants, turn_order=turn_order,
-                    round=1, active_idx=0, log=[])
+                    round=1, active_idx=0, log=[],
+                    rank_depth=rank_depth, action_economy=tactical)
     SESSION.encounter = enc
 
     snapshot = _encounter_snapshot()
@@ -2615,14 +2655,17 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None) -> dict
 @mcp.tool()
 def request_combat(reason: str, canon: list[str] = None,
                    improvised: list[dict] = None,
-                   initiative_advantage: str = "") -> dict:
+                   initiative_advantage: str = "",
+                   tactical: bool = False, rank_depth: int = 2,
+                   player_rank: int = 0) -> dict:
     """Codex 或玩家提议开战。MCP 做合法性校验后等效于 start_combat。
 
     Args:
         reason: 开战理由（如"守卫发现你闯入库房"）
         canon: enemy id 列表
-        improvised: [{name, archetype, count}] 列表
+        improvised: [{name, archetype, count, rank?, reach?, max_poise?}] 列表
         initiative_advantage: "player"=玩家先手加值 / ""=正常
+        tactical/rank_depth/player_rank: §14 战术战斗参数，透传 start_combat
     """
     if err := _require_started():
         return err
@@ -2644,7 +2687,9 @@ def request_combat(reason: str, canon: list[str] = None,
             return {"ok": False, "error": "当前场景无可战斗敌人。请提供 canon 或 improvised 参数。"}
 
     # Start combat
-    result = start_combat(canon=canon, improvised=improvised)
+    result = start_combat(canon=canon, improvised=improvised,
+                          tactical=tactical, rank_depth=rank_depth,
+                          player_rank=player_rank)
     if not result["ok"]:
         return result
 
@@ -2883,15 +2928,6 @@ def declare_intent(actor: str, intent: str, target: str = "",
             return {"ok": False, "error": f"目标 {target!r} 不存在"}
         target_com = enc.combatants[target]
 
-        # §14-R2 reach 门控：触及距离 = 双方靠后程度之和。默认 reach=99 → 无限制（现状）。
-        # 近战手段 reach 小（只够前排打前排）；远程/法术 reach 大。
-        gap = combatant.rank + target_com.rank
-        if gap >= combatant.reach:
-            return {"ok": False,
-                    "error": f"{target_com.name} 在触及范围外"
-                             f"（需 reach≥{gap + 1}，当前 {combatant.reach}）。"
-                             f"先 move 进位或改用远程手段。"}
-
         damage_expr = combatant.damage_expr
         dmg_type = combatant.damage_type
         atk_scaling: dict | None = None
@@ -2899,9 +2935,12 @@ def declare_intent(actor: str, intent: str, target: str = "",
         weapon_id = weapon if weapon else ""
         if not weapon_id and actor == "player":
             weapon_id = SESSION.state.equipped.get("weapon", "")
+        # §14-R2：触及距离 = 用武器则取武器 reach（近战刀=1/弓=99），徒手则取本体 reach。
+        eff_reach = combatant.reach
         if weapon_id:
             item = SESSION.state.get_item(weapon_id)
             if item:
+                eff_reach = item.reach
                 # §11 R3：优先读结构化字段；回退读 "dmg:" tag（向后兼容）
                 if item.damage_expr:
                     damage_expr = item.damage_expr
@@ -2914,6 +2953,15 @@ def declare_intent(actor: str, intent: str, target: str = "",
                     dmg_type = item.damage_type
                 if item.scaling:
                     atk_scaling = item.scaling
+
+        # §14-R2 reach 门控：触及距离 = 双方靠后程度之和。默认 99 → 无限制（现状）。
+        # 近战手段 reach 小（只够前排打前排）；远程/法术 reach 大。
+        gap = combatant.rank + target_com.rank
+        if gap >= eff_reach:
+            return {"ok": False,
+                    "error": f"{target_com.name} 在触及范围外"
+                             f"（需 reach≥{gap + 1}，当前手段 {eff_reach}）。"
+                             f"换远程武器、或 move 进位、或拉敌人进身。"}
 
         # Attack roll vs target AC
         atk_roll = roll_check(
