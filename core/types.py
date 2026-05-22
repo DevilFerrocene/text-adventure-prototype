@@ -593,6 +593,10 @@ class ActiveSkill:
     cooldown: int = 0
     remaining_cooldown: int = 0
     recipe: List[Step] = field(default_factory=list)
+    # §14-R2 行动经济：每个动作自带耗费标记，引擎据此判定一回合能不能再动。
+    # "major"=大动（攻击/多数技能，每回合 1 个）；"minor"=小动（走位/小动作，每回合 1 个）；
+    # "free"=不占行动经济（如纯姿态切换/喊话）。默认 major——技能多数是大动。
+    action_cost: str = "major"
 
 
 @dataclass
@@ -713,6 +717,10 @@ class Combatant:
     poise: int = 0                  # 当前削韧累积
     max_poise: int = 0              # 破防阈值（0=无破防条，杂兵默认无；精英/首领才设）
     staggered: bool = False         # 是否破防（爆发窗口）
+    # §14-R2 行动经济：每回合 1 大动 + 1 小动。回合开始时清零，动作落地时置位。
+    # 仅在 Encounter.action_economy=True 时生效；否则沿用"一动即过"的旧流程。
+    acted_major: bool = False       # 本回合大动是否已用
+    acted_minor: bool = False       # 本回合小动是否已用
 
 
 @dataclass
@@ -735,6 +743,9 @@ class Encounter:
     active_idx: int = 0
     log: list[CombatEvent] = field(default_factory=list)
     rank_depth: int = 2             # §14：每方列阵档数（默认 2=前/后；可设 3=前/中/后）
+    # §14-R2：行动经济总开关。False=旧流程（一动即过，206 测试/3 前端不变）；
+    # True=战术模式（每回合 1 大动 + 1 小动，按 action_cost 门控，回合需显式/耗尽才过）。
+    action_economy: bool = False
 
 
 # ── 路线九 §9：实体能力契约 ────────────────────────────────────────
