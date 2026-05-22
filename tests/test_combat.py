@@ -228,6 +228,32 @@ class ActionEconomyTest(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertEqual(r["next_actor"], "enemy_dock_thug")
 
+    def test_reach_gates_attack_out_of_range(self):
+        # 近战 reach=1：玩家在前排(0)，敌人在后排(1) → gap=1≥reach → 打不到
+        player = self.enc.combatants["player"]
+        thug = self.enc.combatants["enemy_dock_thug"]
+        player.rank, player.reach = 0, 1
+        thug.rank = 1
+        r = mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_dock_thug")
+        self.assertFalse(r["ok"])
+        self.assertIn("触及范围外", r["error"])
+        # 敌人移到前排 → gap=0 < reach → 可打
+        thug.rank = 0
+        r2 = mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_dock_thug")
+        self.assertTrue(r2["ok"])
+
+    def test_default_reach_unlimited(self):
+        # 默认 reach=99：无论排位都打得到（现状行为）
+        player = self.enc.combatants["player"]
+        thug = self.enc.combatants["enemy_dock_thug"]
+        player.rank, thug.rank = 0, 1
+        self.assertEqual(player.reach, 99)
+        r = mcp_server.declare_intent(
+            actor="player", intent="attack", target="enemy_dock_thug")
+        self.assertTrue(r["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

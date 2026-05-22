@@ -2883,6 +2883,15 @@ def declare_intent(actor: str, intent: str, target: str = "",
             return {"ok": False, "error": f"目标 {target!r} 不存在"}
         target_com = enc.combatants[target]
 
+        # §14-R2 reach 门控：触及距离 = 双方靠后程度之和。默认 reach=99 → 无限制（现状）。
+        # 近战手段 reach 小（只够前排打前排）；远程/法术 reach 大。
+        gap = combatant.rank + target_com.rank
+        if gap >= combatant.reach:
+            return {"ok": False,
+                    "error": f"{target_com.name} 在触及范围外"
+                             f"（需 reach≥{gap + 1}，当前 {combatant.reach}）。"
+                             f"先 move 进位或改用远程手段。"}
+
         damage_expr = combatant.damage_expr
         dmg_type = combatant.damage_type
         atk_scaling: dict | None = None
