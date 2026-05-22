@@ -706,6 +706,13 @@ class Combatant:
     max_stamina: int = 0
     is_dead: bool = False
     archetype: str = ""             # 来源原型，用于击败后按 CHAR_XP_BY_ARCHETYPE 给经验
+    # ── §14 战斗结构层（加法式：默认值=现有"无结构"行为，旧战斗不变）──
+    rank: int = 0                   # 列阵位：0=最前排，越大越靠后
+    reach: int = 99                 # 基础攻击触及的排数差（默认 99=无限，即现状"谁都能打谁"）
+    windup: Optional[dict] = None   # 蓄力中的待结算动作 {turns_left,name,intent,target}；None=未蓄力
+    poise: int = 0                  # 当前削韧累积
+    max_poise: int = 0              # 破防阈值（0=无破防条，杂兵默认无；精英/首领才设）
+    staggered: bool = False         # 是否破防（爆发窗口）
 
 
 @dataclass
@@ -727,6 +734,7 @@ class Encounter:
     round: int = 1
     active_idx: int = 0
     log: list[CombatEvent] = field(default_factory=list)
+    rank_depth: int = 2             # §14：每方列阵档数（默认 2=前/后；可设 3=前/中/后）
 
 
 # ── 路线九 §9：实体能力契约 ────────────────────────────────────────
