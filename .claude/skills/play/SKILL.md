@@ -196,7 +196,7 @@ ttl：1-5 回合
 玩家进入冲突（被守卫发现、主动袭击 NPC、遭遇伏击）：
 
 - 优先 `request_combat(reason, canon?, improvised?)`——它做合法性校验。`canon` 引用 content 里预定义敌人 id（如 `["dock_thug"]`）；`improvised` 用原型表临场造（如 `[{"name":"醉汉","archetype":"brute_low","count":2}]`）。
-- `intent`：attack / defend / flee / use_item。
+- `intent`：attack / defend / flee / use_item（战术模式另有 move / end_turn，见下）。
 - 战斗结束（敌人全灭/逃跑/和解）→ `end_combat(reason)`，玩家 hp 自动写回。
 - 每次战斗工具返回的 `encounter.combat_hud` 直接贴给玩家（见【前台输出格式】§4）。
 
@@ -209,6 +209,20 @@ ttl：1-5 回合
 - `next_actor` 是 `None`（战斗已结束）→ 收尾叙事 + `end_combat`。
 
 一句话：**敌人回合你来跑，玩家回合你停手。** 看到 `next_actor: "player"` 就收笔，别越俎代庖。
+
+### 战术战斗（§14：列阵 + 行动经济，可选，默认关）
+
+普通遭遇（路边杂兵）走上面的简单流程就好——别把每场架都搞复杂。但**值得设计的硬仗**（首领、布防、有地形/站位意味的战斗），你可以开**战术模式**，让"近战/远程/走位"打出不同，而不是脸贴脸互砍：
+
+- **开战时声明**：`start_combat(..., tactical=True, rank_depth=2)`（或 `request_combat` 同参）。`rank_depth=2` 是前/后排，`3` 是前/中/后。
+- **给敌人定位**：`improvised` 敌人 dict 里加 `rank`（列阵位，0=最前）、`reach`（触及排数，近战=1、长柄=2、远程/法术=99）、`max_poise`（破防阈值，给精英/首领，0=无）。例：
+  `[{"name":"持盾兵","archetype":"brute_mid","rank":0,"reach":1},{"name":"弓手","archetype":"scout","rank":1,"reach":99}]`
+- **触及由引擎裁定，别口述**：攻击时引擎算 `gap = 攻方rank + 守方rank`，`gap ≥ 武器reach` 就打不到（返回拒绝 + 提示）。玩家拿近战刀（reach=1）够不到后排弓手，**这是引擎规则，不是你说了算**——别凭空叙事"你一个箭步绕到弓手背后"，那破坏"算得清"。要近身就 `move`，要点后排就换远程武器（`declare_intent` 的 `weapon` 参数指定）。
+- **行动经济（战术模式专属）**：每个单位每回合 **1 大动 + 1 小动**。`declare_intent` 返回的 `actions_left:{major,minor}` 是权威。攻击/防御/逃跑/用物=大动，`move`（改自身 rank：`target="advance"/"retreat"/排号`）=小动，`end_turn`=放弃剩余槽过回合。
+  - **关键**：战术模式下，玩家用掉一个动作后 `next_actor` **仍是 `"player"`**（还有另一个槽）！别误以为该敌人动了。只有两槽都用完、或玩家 `end_turn`，`next_actor` 才转敌人。所以玩家回合你可能要等他做**两个**动作（一大一小）才停手——照 `next_actor` 办，不照"他动过一次了"办。
+  - 敌人回合同理：你替敌人可以走位（小动）+ 攻击（大动），用 `end_turn` 或耗尽后才轮下一个。
+- **看得见战场**：战术模式下 `encounter` 快照会多出 `rank/reach/poise` 和 `action_economy/actions_left`——贴 HUD、做决策都靠它。
+- **克制**：战术模式是给"位置有意义"的仗加深度的，不是每场都开。杂兵清场保持简单快。
 
 ## 动态难度调节：让挑战贴合玩家（但别砸了"算得清"）
 
