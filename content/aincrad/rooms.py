@@ -18,7 +18,7 @@ def add_all(world):
             "唯一的好消息：「镇子里安全」，至少没人会在火堆边捅你。"
         ),
         exits={"north": "plains", "east": "tavern"},
-        objects=["weapon_rack", "rack_iron_sword", "rack_dagger",
+        objects=["weapon_rack", "registry_officer", "rack_iron_sword", "rack_dagger",
                  "teleport_crystal", "skill_trainer", "campfire",
                  "camp_merchant", "lost_scout", "coin_pouch", "field_notes",
                  "oath_altar"],
@@ -53,9 +53,9 @@ def add_all(world):
         name="雾语草原",
         base_description=(
             "出了镇门就是草原：草高及腰，雾低过膝，十步之外的景物开始在乳白里融化。"
-            "风吹草动时你以为是眼花，但那些晃动里总有几处逆着风向——那是怪。"
+            "风吹草动时你以为是眼花，但那些晃动里偶尔有几处逆着风向——这片草原从不缺东西盯着落单的人。"
             "西边草色压暗，连成一道黑黢黢的树林轮廓；北面雾最浓处立着几根青石柱，是迷宫的入口。"
-            "脚边的草丛里，一团雪白的东西抽动着鼻子，长耳朵转向了你。"
+            "至于此刻草里藏着什么、有没有东西正朝你来——得你自己看清。"
         ),
         exits={"south": "camp", "north": "labyrinth", "west": "forest_edge"},
         objects=["field_chest", "mist_shrine", "tall_grass",
@@ -85,7 +85,7 @@ def add_all(world):
         area="苍穹回廊·第一层",
         zone="雾语树林",
         coords=(-1, 1),
-        tags=["forest", "risky", "floor_1", "misty"],
+        tags=["forest", "risky", "floor_1", "misty", "spawn_ground"],
         enemies=["gale_wolf"],
     ))
     world.add_room(Room(
@@ -122,7 +122,7 @@ def add_all(world):
         area="苍穹回廊·第一层",
         zone="雾语迷宫",
         coords=(0, 2),
-        tags=["dungeon", "trap", "floor_1", "labyrinth"],
+        tags=["dungeon", "trap", "floor_1", "labyrinth", "spawn_ground"],
         enemies=["gale_wolf", "shadow_lurker"],
     ))
 

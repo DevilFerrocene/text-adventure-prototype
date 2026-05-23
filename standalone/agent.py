@@ -18,12 +18,40 @@ from .tools import build_tools, call_tool
 
 MAX_TOOL_ITERS = 16   # 单回合内最多几轮工具调用，防失控
 
-# ── 上下文压缩 ────────────────────────────────────────────────────
-# 对话历史无界增长会撑爆窗口、每回合烧更多 token。但本游戏【引擎才是长程记忆】
+# ── 上下文压缩（仿 agent compact / 即 Claude Code 自动压缩那套思路）──────────────
+# 对话历史无界增长会撑爆窗口、每回合烧更多 token。本游戏【引擎才是长程记忆】
 # （HUD/任务/线索/对话日志/房间快照/背包全在引擎里，每回合用 get_state/recall 重查），
-# 所以历史只需保留最近若干回合的叙事流，旧回合可整轮丢弃——事实都在引擎里。
-# 三个阈值由 LLMConfig 提供（可经 .env 配：HISTORY_CHAR_BUDGET / KEEP_RECENT_TURNS /
-# OLD_TOOL_RESULT_CAP）。HISTORY_CHAR_BUDGET ≤ 0 表示关闭压缩。
+# 所以历史只需保叙事连贯。做法：超预算时，把【较早那段对话】交给 LLM 压成一份
+# 简洁的【前情提要】，替换掉那段原始消息；最近 keep_recent_turns 个回合【逐字保留】。
+#
+# 谨慎原则（这是处理"提示词"，必须稳）：
+#   · 整回合粒度 + LLM 摘要——绝不逐条截断/改写消息内容（截半的 JSON 会让模型掉格式）。
+#   · 摘要替换只发生在回合【边界】，tool_call↔tool 配对天然不破。
+#   · 摘要只管【叙事】，明令不记机制数值（hp/金币/属性/坐标——引擎里有实时权威值）。
+#   · 摘要 LLM 调用失败 → 安全回退到"整回合丢弃旧段"，绝不让压缩本身搞坏一个回合。
+# 阈值经 .env：HISTORY_CHAR_BUDGET（触发阈值，≤0 关闭压缩）/ KEEP_RECENT_TURNS（逐字窗口）。
+
+# 压缩用记录员 prompt：把旧对话压成供 GM 续写的【前情提要】，刻意不碰机制数值。
+COMPACT_SYSTEM = """你是这局 TRPG 文字冒险的记录员。下面是一段较早的游戏对话，请把它压成一份简洁、客观的【前情提要】，供 GM 继续主持时快速回顾。
+
+只保留对【后续叙事连贯】重要的信息：
+- 玩家是谁、当前处境与目标
+- 已发生的关键事件、抉择、转折（按时间顺序）
+- 重要人物 / 关系、达成或破裂的约定
+- 尚未了结的线索、伏笔、承诺、威胁
+- 这局的基调与文风提示
+
+不要记录具体机制数值（hp / 金币 / 属性 / 坐标 / 骰点——这些引擎里有实时权威值，GM 会自己查）。
+紧凑分点、能省则省，不复述无关闲笔。直接输出提要正文，不要任何前言或客套。"""
+
+# 前情提要【追加进 system 提示词】的分隔块头。放进 system 而非单独消息，是为了：
+#   ① 保证 user/assistant 严格交替（部分思考模型不接受连续同角色消息，会 400）；
+#   ② 把"剧情回顾"明确归位成上下文，而非玩家发言或真实数值；
+#   ③ 让格式锚（system 里的输出规范）始终完整在场、不被冲淡。
+RECAP_PREFIX = ("\n\n========================================\n"
+                "【前情提要】先前剧情的压缩回顾，仅供你延续叙事与基调；"
+                "具体机制数值（hp / 金币 / 属性 / 位置等）一律以引擎实时查询为准。\n"
+                "========================================\n")
 
 
 @dataclass
@@ -40,7 +68,10 @@ class GameAgent:
     def __post_init__(self):
         self.client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
         self.tool_specs, self.dispatch = build_tools()
-        self.messages = [{"role": "system", "content": load_system_prompt(self.rich_ui)}]
+        # 基础 system 提示词单独存一份：压缩时把前情提要【追加】在它后面（不污染原文，
+        # 再压缩时整体重算，避免提要无限增长）。messages[0] = _base_system [+ RECAP + 提要]。
+        self._base_system = load_system_prompt(self.rich_ui)
+        self.messages = [{"role": "system", "content": self._base_system}]
 
     def _history_chars(self) -> int:
         """粗估历史体量（字符数；中文≈token 同量级，够用来当压缩阈值）。"""
@@ -52,38 +83,90 @@ class GameAgent:
                 total += len(json.dumps(tcs, ensure_ascii=False))
         return total
 
+    def _render_for_summary(self, msgs: list) -> str:
+        """把一段消息摊平成可读剧情文本，喂给摘要 LLM。
+        只取叙事相关：玩家输入 + GM 叙事 + GM 调了哪些工具（动作线索）；
+        工具【结果】跳过——那是机制数据，引擎里有权威值，进摘要既无益又会塞回 JSON。"""
+        lines = []
+        for m in msgs:
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if role == "user":
+                lines.append(f"【玩家】{content}")
+            elif role == "assistant":
+                if content:
+                    lines.append(f"【GM】{content}")
+                for tc in (m.get("tool_calls") or []):
+                    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                    name = fn.get("name", "")
+                    args = (fn.get("arguments", "") or "")[:80]
+                    lines.append(f"（GM 用了工具 {name} {args}）".rstrip())
+            # role == "tool"：机制结果，跳过
+        return "\n".join(lines)
+
+    def _summarize(self, text: str) -> str:
+        """让 LLM 把一段剧情文本压成【前情提要】正文。一次性、无工具、无流式。
+        失败抛异常，由调用方回退处理。（独立成法便于测试替身注入。）"""
+        if not text.strip():
+            return ""
+        resp = self.client.chat.completions.create(
+            model=self.config.model,
+            messages=[{"role": "system", "content": COMPACT_SYSTEM},
+                      {"role": "user", "content": text}],
+            temperature=0.3,
+            max_tokens=900,
+        )
+        return (resp.choices[0].message.content or "").strip()
+
+    def _extract_recap(self) -> str:
+        """从 system 消息里取出上一次的前情提要正文（没有则空串）。"""
+        content = self.messages[0].get("content", "") if self.messages else ""
+        idx = content.find(RECAP_PREFIX)
+        return content[idx + len(RECAP_PREFIX):].strip() if idx != -1 else ""
+
     def _compress_history(self):
-        """回合开始时压缩历史。三招，全都不破坏 tool_call↔tool 配对：
-        ① 剥离已完成回合的 reasoning_content（思考链是死重，DeepSeek 也不该回传旧的）；
-        ② 截断旧回合的工具结果（最新一轮保留完整，旧的可重新 get_state/recall）；
-        ③ 仍超预算 → 按【玩家回合】边界整轮丢最老的，保 system + 最近 keep_recent_turns 轮。
+        """回合开始时压缩历史（仿 agent compact）：
+        ① 先剥离历史里的 reasoning_content（跨回合是死重，部分思考模型回传旧的还会 400）；
+        ② 未超预算 → 不动（绝不做任何逐条改写）；
+        ③ 超预算 → 把【旧段 + 已有前情提要】LLM 压成新【前情提要】，追加进 system；旧段整段删除，
+           最近 keep_recent_turns 回合逐字保留。删除只落在回合边界，tool 配对天然不破；
+           摘要失败则安全回退到"整回合丢弃旧段"，绝不让压缩本身搞坏一个回合。
         阈值取自 self.config（可经 .env 配）；history_char_budget ≤ 0 时整体关闭压缩。
         """
         budget = self.config.history_char_budget
         keep_turns = self.config.keep_recent_turns
-        tool_cap = self.config.old_tool_result_cap
         msgs = self.messages
         if budget <= 0 or len(msgs) <= 3:
             return
-        # ① 剥离历史里的 reasoning_content（仅当前回合循环内需要，跨回合是死重）
+        # ① 剥离 reasoning_content（仅当前回合循环内需要，跨回合死重）
         for m in msgs[1:]:
             m.pop("reasoning_content", None)
-        # ② 截断旧工具结果（保留最近一轮的完整结果）
+        # ② 未超预算 → 到此为止，不改任何内容
+        if self._history_chars() <= budget:
+            return
+        # ③ 超预算 → 旧段压成前情提要（追加进 system），最近若干回合逐字保留
         user_idx = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
-        last_round_start = user_idx[-1] if user_idx else len(msgs)
-        for i in range(1, last_round_start):
-            m = msgs[i]
-            if m.get("role") == "tool":
-                c = m.get("content") or ""
-                if len(c) > tool_cap:
-                    m["content"] = (c[:tool_cap]
-                                    + " …[旧工具结果已截断；最新状态以 get_state/recall 为准]")
-        # ③ 仍超预算 → 整轮丢最老的（系统消息恒保留）
-        if self._history_chars() > budget:
-            user_idx = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
-            if len(user_idx) > keep_turns:
-                cut = user_idx[-keep_turns]   # 倒数第 K 个玩家回合的起点
-                del msgs[1:cut]               # 砍掉 system 之后、到该点之前的整段旧历史
+        n = len(user_idx)
+        if n <= 1:
+            return                       # 只有一个回合，没有可安全压缩的旧段
+        eff_keep = min(keep_turns, n - 1)   # 逐字窗口 ≤ keep_turns，但总留 ≥1 回合给压缩腾地
+        cut = user_idx[-eff_keep]        # 逐字窗口的起点（一个玩家回合边界）
+        head = msgs[1:cut]               # system 之后、逐字窗口之前的旧段（含开局叙事）
+        if not head:
+            return
+        # 把已有的前情提要一并卷进去重压，避免提要随局数无限增长
+        prior = self._extract_recap()
+        text = self._render_for_summary(head)
+        if prior:
+            text = f"（此前的前情提要）\n{prior}\n\n（之后又发生）\n{text}"
+        try:
+            summary = self._summarize(text)
+        except Exception:
+            summary = ""                 # 摘要 LLM 失败/超时 → 走回退
+        if summary:
+            # system 重算 = 基础提示词 + 新前情提要（不堆叠旧提要，整体替换）
+            msgs[0] = {"role": "system", "content": self._base_system + RECAP_PREFIX + summary}
+        del msgs[1:cut]                  # 旧段整段删除（摘要成功=已入 system；失败=安全丢弃）
 
     def _complete(self):
         return self.client.chat.completions.create(
@@ -194,7 +277,12 @@ class GameAgent:
                 yield ("final", full_content.strip())
                 return
 
-            # 这轮是工具调用：组装 assistant 消息（含 tool_calls）入历史
+            # 这轮是【工具调用轮】，但它也喷了叙事（抢在工具结果出来前的"抢跑草稿"）——
+            # 玩家该看到的是最后一轮结算后的叙事，不是这段抢跑文。让前端把已流出的这段清掉。
+            if full_content.strip():
+                yield ("reset", "")
+
+            # 组装 assistant 消息（含 tool_calls）入历史
             # 思考模型要求把 reasoning_content 一并回传，否则下一轮 400。
             ordered = [tc_accum[i] for i in sorted(tc_accum)]
             assistant_msg = {

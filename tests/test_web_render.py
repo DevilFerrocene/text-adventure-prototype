@@ -1,7 +1,8 @@
 """Web 富 UI：从工具结果抽结构面板 + 散文模式提示词。"""
 import unittest
 
-from standalone.web import _render_events
+import mcp_server
+from standalone.web import _render_events, hud_payload
 from standalone.prompt import load_system_prompt
 
 
@@ -76,15 +77,78 @@ class RenderEventsTest(unittest.TestCase):
         self.assertNotIn("combat_log", dict(_render_events("end_combat", result)))
 
 
-class PromptModeTest(unittest.TestCase):
-    def test_rich_ui_appends_override(self):
-        p = load_system_prompt(rich_ui=True)
-        self.assertIn("富 UI 覆盖", p)
-        self.assertIn("只写叙事散文", p)
+class EnemiesCardTest(unittest.TestCase):
+    """F2：刷出/在场的敌人（未开战）渲染成"敌在场"卡。"""
 
-    def test_default_keeps_paste_instructions(self):
-        p = load_system_prompt(rich_ui=False)
+    def test_enemy_profiles_become_enemies_card(self):
+        mcp_server.start_game("aincrad")          # encounter=None
+        result = {"enemy_profiles": [
+            {"name": "杀人兔", "hp": 8, "max_hp": 8, "damage_expr": "1d4"}]}
+        out = dict(_render_events("move", result))
+        self.assertIn("enemies", out)
+        self.assertEqual(out["enemies"]["list"][0]["name"], "杀人兔")
+
+    def test_no_enemies_card_during_combat(self):
+        # 开战后由 combat 面板接管，不再出"敌在场"卡（避免重复）
+        mcp_server.start_game("aincrad")
+        mcp_server.start_combat(canon=["killer_rabbit"])
+        result = {"enemy_profiles": [{"name": "杀人兔", "hp": 8, "max_hp": 8}]}
+        out = dict(_render_events("get_scene", result))
+        self.assertNotIn("enemies", out)
+        mcp_server.end_combat(reason="test")
+
+
+class HudCombatHpTest(unittest.TestCase):
+    """F4：战斗中 HUD 血量跟 Combatant 走，不显示过期的 vitals。"""
+
+    def test_hud_uses_combatant_hp_in_combat(self):
+        mcp_server.start_game("aincrad")
+        mcp_server.SESSION.state.vitals.hp = 6        # vitals 满
+        mcp_server.start_combat(canon=["killer_rabbit"])
+        mcp_server.SESSION.encounter.combatants["player"].hp = 3  # 战斗中掉到 3
+        hud = hud_payload()
+        self.assertEqual(hud["vitals"]["hp"], 3)      # HUD 跟战斗走，不是过期的 6
+        self.assertTrue(hud["in_combat"])
+        mcp_server.end_combat(reason="test")
+
+    def test_hud_uses_vitals_outside_combat(self):
+        mcp_server.start_game("aincrad")
+        mcp_server.SESSION.state.vitals.hp = 5
+        hud = hud_payload()
+        self.assertEqual(hud["vitals"]["hp"], 5)
+        self.assertFalse(hud["in_combat"])
+
+
+class PromptModeTest(unittest.TestCase):
+    def test_rich_ui_uses_prose_block(self):
+        # 富 UI：前台格式整章换成散文版（面板交界面渲染），且无自相矛盾的"覆盖否定"
+        p = load_system_prompt(rich_ui=True)
+        self.assertIn("只写叙事散文", p)
+        self.assertIn("界面自动渲染", p)
+        self.assertIn("绝不列表", p)             # F1：明令禁止罗列物件/出口清单
+        self.assertNotIn("一律作废", p)          # 不再"全量塞 + 末尾否定"
         self.assertNotIn("富 UI 覆盖", p)
+
+    def test_default_uses_paste_block(self):
+        # 纯文本前端：保留粘贴版（GM 自己贴 HUD/骰子/场景），不混进散文版
+        p = load_system_prompt(rich_ui=False)
+        self.assertIn("直接原样贴出来", p)        # 粘贴版独有
+        self.assertNotIn("界面自动渲染", p)        # 散文版不该出现
+        self.assertNotIn("一律作废", p)
+
+    def test_no_raw_markers_or_frontmatter_leak(self):
+        # 二选一的切分标记 + skill frontmatter 都不该漏进最终提示词
+        for rich in (True, False):
+            p = load_system_prompt(rich_ui=rich)
+            self.assertNotIn("FRONTEND:PASTE", p)   # HTML 切分标记被剥
+            self.assertNotIn("name: play", p)        # 宿主用的 frontmatter 被剥
+            self.assertNotIn("----- SKILL", p)       # 文档套文档的拼接缝已去
+
+    def test_rich_ui_has_no_residual_paste_commands(self):
+        # 散文版下，正文里不该再残留"叫 GM 贴面板"的指令（曾散落在战斗/战术段，和散文版矛盾）
+        p = load_system_prompt(rich_ui=True)
+        for leak in ("直接贴给玩家", "贴出最新 `combat_hud`", "贴 HUD"):
+            self.assertNotIn(leak, p)
 
 
 if __name__ == "__main__":

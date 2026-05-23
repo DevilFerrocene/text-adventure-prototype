@@ -282,8 +282,8 @@ async function sendTurn(text){
   const think = document.createElement('div'); think.className='thinking'; think.textContent='⋯ GM 正在推演';
   stage.appendChild(think); scrollEnd();
   let gm=null;
-  // 引擎渲染面板（本回合内：场景/战斗各保一张就地更新，骰子逐条累积）
-  let curScene=null, curCombat=null;
+  // 引擎渲染面板（本回合内：场景/战斗/敌在场各保一张就地更新，骰子逐条累积）
+  let curScene=null, curCombat=null, curEnemies=null;
   const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const mkCard=(type,html)=>{const c=document.createElement('div');c.className='msg card '+type;c.innerHTML=html;
     if(think.parentNode) stage.insertBefore(c,think); else stage.appendChild(c); scrollEnd(); return c;};
@@ -323,6 +323,16 @@ async function sendTurn(text){
     }else if(type==='combat_log'){
       const body=(d.lines||[]).map(l=>esc(l)).join('<br>');
       if(body) mkCard('log','<div class="card-b log-body">'+body+'</div>');
+    }else if(type==='enemies'){
+      // 未开战的在场敌人（刷怪/进场撞上）：一张"敌在场"卡，提示玩家有威胁
+      const rows=(d.list||[]).map(e=>{
+        const dmg=e.damage?(' · '+esc(e.damage)):'';
+        return `<div class="cb enemy"><span class="nm">${esc(e.name)}</span>`+
+               `<span class="bar"><i style="width:100%"></i></span>`+
+               `<span class="hp">${e.hp}/${e.max_hp}${dmg}</span></div>`;
+      }).join('');
+      const html=`<div class="ttl">⚠️ 敌在场</div>`+rows;
+      if(curEnemies) curEnemies.innerHTML=html; else curEnemies=mkCard('enemies',html);
     }
   };
   try{
@@ -349,6 +359,9 @@ async function sendTurn(text){
           think.textContent='⋯ GM 正在推演';
         }else if(ev==='render'){
           renderCard(data.type, data.data);
+        }else if(ev==='reset'){
+          // 中间轮的"抢跑叙事"——清掉，等最后一轮重新流（玩家只该看到结算后的叙事）
+          if(gm){ gm.remove(); gm=null; }
         }else if(ev==='final'){
           if(gm){ gm.classList.remove('cursor'); gm.innerHTML=mdToHtml(gm.dataset.raw||data.text); }
         }else if(ev==='hud'){

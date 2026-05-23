@@ -12,6 +12,7 @@ ENEMIES = {
         damage_expr="1d4", damage_type="pierce",
         behavior_profile="aggressive", skills=[],
         damage_types_resist={},
+        spawn_weight=4.0,   # 草原"教学怪"：刷怪占大头，让新手大概率先遇到它而非更硬的狼/猪
         loot=["rabbit_pelt"],
         flavor=(
             "一团雪白的、看起来人畜无害的长耳兔子，蹲在草地上抽动鼻子——"

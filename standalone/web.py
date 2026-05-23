@@ -50,6 +50,13 @@ def _render_events(name: str, result) -> list:
         exits = [d for d, info in (scene.get("exits") or {}).items()
                  if not (isinstance(info, dict) and info.get("locked"))]
         out.append(("scene", {"objects": objs, "exits": exits}))
+    # 敌在场（未开战）：刷怪/进场后把在场敌人显成一张"敌在场"卡（开战后由 combat 面板接管，故跳过）
+    profiles = result.get("enemy_profiles")
+    if isinstance(profiles, list) and profiles and mcp_server.SESSION.encounter is None:
+        out.append(("enemies", {
+            "list": [{"name": p.get("name"), "hp": p.get("hp"), "max_hp": p.get("max_hp"),
+                      "damage": p.get("damage_expr", "")} for p in profiles],
+        }))
     # 明骰：explain_last_roll 的 line_format
     if result.get("line_format"):
         out.append(("dice", {"line": result["line_format"],
@@ -127,13 +134,22 @@ def hud_payload() -> dict:
     attr_labels = (rb.attributes if rb else {}) or {}
     room = s.world.get_room(s.state.position)
     quest = s.state.quest_log[0] if s.state.quest_log else None
+    # 战斗中 hp/stamina 的权威在 Combatant 上（end_combat 才写回 vitals）——直接读 vitals
+    # 会让 HUD 显示过期血量。在场就从 encounter 的 player combatant 取，和战斗面板对齐。
+    hp, max_hp = v.hp, v.max_hp
+    stamina, max_stamina = v.stamina, v.max_stamina
+    if s.encounter is not None:
+        pc = s.encounter.combatants.get("player")
+        if pc is not None:
+            hp, max_hp = pc.hp, pc.max_hp
+            stamina, max_stamina = pc.stamina, pc.max_stamina
     return {
         "started": True,
         "world": s.world_name,
         "in_combat": s.encounter is not None,
         "vitals": {
-            "hp": v.hp, "max_hp": v.max_hp,
-            "stamina": v.stamina, "max_stamina": v.max_stamina,
+            "hp": hp, "max_hp": max_hp,
+            "stamina": stamina, "max_stamina": max_stamina,
             "gold": v.gold, "level": v.level, "exp": v.exp,
         },
         # 动态属性：[{key,label,value}]，前端遍历出条，不写死 HP/SAN
@@ -186,6 +202,9 @@ async def turn(request: Request) -> StreamingResponse:
                         for rtype, rdata in _render_events(payload.get("name"),
                                                            payload.get("result")):
                             yield _sse("render", {"type": rtype, "data": rdata})
+                    elif kind == "reset":
+                        # 中间轮抢跑叙事 → 让前端清掉，等最后一轮重新流
+                        yield _sse("reset", {})
                     elif kind == "final":
                         yield _sse("final", {"text": payload})
             except Exception as exc:

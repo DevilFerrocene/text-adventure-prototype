@@ -38,10 +38,10 @@ class LLMConfig:
     temperature: float = 0.8          # 叙事要点温度，但别太放飞
     max_tokens: int = 2048
     debug: bool = False
-    # ── 上下文压缩（独立运行 agent loop；引擎才是长程记忆，历史可激进裁剪）──
-    history_char_budget: int = 40000  # 历史体量超此（粗估字符≈token）就压缩；≤0 关闭压缩
-    keep_recent_turns: int = 6        # 至少完整保留最近 N 个玩家回合（保叙事连贯）
-    old_tool_result_cap: int = 600    # 旧回合工具结果截断到此长度（最新一轮保留完整）
+    # ── 上下文压缩（独立运行 agent loop 仿 agent compact；引擎才是长程记忆）──
+    history_char_budget: int = 40000  # 历史体量超此（粗估字符≈token）就触发 LLM 压缩；≤0 关闭
+    keep_recent_turns: int = 6        # 逐字保留最近 N 个玩家回合；更早的压成【前情提要】
+    old_tool_result_cap: int = 600    # 【已废弃】旧的"截断工具结果"参数，现方案不用，留作 .env 兼容
 
     @classmethod
     def from_env(cls) -> "LLMConfig":

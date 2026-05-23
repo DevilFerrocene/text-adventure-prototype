@@ -50,6 +50,7 @@ class Affordance:
     desc: str = ""
     requires_item: Optional[str] = None   # 背包物品 ID
     requires_flag: Optional[str] = None   # state.flags key
+    requires_armed: bool = False          # 须持有一把真武器（背包里任一 equip_slot==weapon）才能调
     effect: dict = field(default_factory=dict)
     consume_self: bool = False
     consume_item: bool = False
@@ -419,6 +420,10 @@ class GameState:
     # §12 危机合约：玩家给【下一场战斗】立的挑战契约，被 start_combat 消费、缩放奖励。
     # {clauses:[id...], difficulty:int, reward_mult:float}；None=未立约。
     pending_contract: Optional[dict] = None
+    # 刷怪：当前房间【此刻实际存在】的敌人 id 列表（不是房间的全量敌人池）。
+    # 进入"spawn_ground"房间时由引擎随机刷一把写进来；离开/战斗结束清空。
+    # get_scene/request_combat 看的是这个，而不是 room.enemies（那只是刷怪池）。
+    active_spawns: List[str] = field(default_factory=list)
 
     def has_item(self, item_id: str) -> bool:
         return any(i.id == item_id for i in self.inventory)
@@ -491,6 +496,9 @@ class GameObject:
     traits: List[str] = field(default_factory=list)
     takable: bool = False
     hidden: bool = False
+    # 一次性事件/已消解的场景物：当 state.flags[hidden_when_flag] 为真时，物体从场景隐去
+    # （不再进 get_scene、不可交互）。用于"酒馆斗殴"这类只该触发一次的事件。
+    hidden_when_flag: Optional[str] = None
     hidden_clue: Optional[str] = None
     hidden_flag: Optional[str] = None
     reveals_objects: List[str] = field(default_factory=list)
@@ -722,6 +730,9 @@ class EnemyTemplate:
     skills: list[str] = field(default_factory=list)
     loot: list[str] = field(default_factory=list)
     flavor: str = ""
+    # 刷怪权重：刷怪场从池里抽怪时的相对权重（默认 1.0）。设大让弱怪/教学怪占多数，
+    # 设小让硬怪稀有——别让 6 血新手第一脚就踩到精英。
+    spawn_weight: float = 1.0
     # §14 战术站位（仅 tactical 战斗生效；默认 rank0/reach99/无破防条=旧行为）
     rank: int = 0                   # 列阵位：0=最前排
     reach: int = 99                 # 触及排数（近战=1，长柄=2，远程/法术=99）

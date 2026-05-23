@@ -110,6 +110,11 @@ def _require_started() -> Optional[dict]:
     return None
 
 
+# 机制内部标签：只供引擎判定（如刷怪），不该进 get_scene 给 GM 看——
+# 否则 GM 会"知道这是刷怪区"而元游戏。GM 只该从 spawned/enemy_profiles 知道【在场】的怪。
+_HIDDEN_SCENE_TAGS = {"spawn_ground"}
+
+
 def _room_snapshot(world: GameWorld, state: GameState) -> dict:
     room = world.get_room(state.position)
     if not room:
@@ -120,6 +125,9 @@ def _room_snapshot(world: GameWorld, state: GameState) -> dict:
     for oid in room.objects:
         obj = world.get_object(oid)
         if not obj or obj.hidden:
+            continue
+        # 一次性事件已消解（flag 置位）→ 从场景隐去，避免每次进门重演（如酒馆斗殴）
+        if obj.hidden_when_flag and state.flags.get(obj.hidden_when_flag):
             continue
         available_affordances = world.get_callable_affordances(oid, state)
         semantics = _object_semantics(obj)
@@ -183,7 +191,7 @@ def _room_snapshot(world: GameWorld, state: GameState) -> dict:
         "area": room.area,
         "zone": room.zone,
         "coords": list(room.coords),
-        "tags": room.tags,
+        "tags": [t for t in room.tags if t not in _HIDDEN_SCENE_TAGS],
         "exits": exits_info,
         "objects": objects_info,
         "priority_objects": sorted(
@@ -250,6 +258,13 @@ def _item_capabilities(item) -> list:
     if not caps:
         caps.append("纯叙事/无机制用途（不可装备、不可当武器、不可使用）")
     return caps
+
+
+def _player_has_weapon(state: GameState) -> bool:
+    """玩家手里有没有一把真能用的武器（背包里任一 equip_slot==weapon 且带伤害；已装备的也在背包里）。
+    用于 requires_armed 校验：登记成为攻略者前，得先靠破局武装自己。"""
+    return any(getattr(i, "equip_slot", "") == "weapon" and getattr(i, "damage_expr", "")
+               for i in state.inventory)
 
 
 def _inventory_snapshot(state: GameState) -> list:
@@ -857,6 +872,8 @@ def start_game(world: str = "aincrad") -> dict:
     )
 
     SESSION = Session(world_name=world, world=new_world, state=new_state)
+    # 刷怪：若开局房间就是刷怪场，进场即刷一把（aincrad 开局在安全营地，通常为空）
+    new_state.active_spawns = _roll_spawns(new_world.get_room(new_state.position))
     _autosave()  # 新开局立即落盘，覆盖旧 autosave（防进程重启误恢复到上一局）
 
     scene = _room_snapshot(new_world, new_state)
@@ -1607,6 +1624,8 @@ def inspect_object(object_id: str) -> dict:
         return {"ok": False, "error": f"{object_id} 不在当前场景也不在背包中"}
     if in_room and obj.hidden:
         return {"ok": False, "error": f"{object_id} 仍处于隐藏状态，当前无法检查"}
+    if in_room and obj.hidden_when_flag and state.flags.get(obj.hidden_when_flag):
+        return {"ok": False, "error": f"{object_id} 已消解，不在当前场景"}
 
     clues_added = []
     flags_set = {}
@@ -1668,6 +1687,8 @@ def call_affordance(object_id: str, verb: str) -> dict:
         return {"ok": False, "error": f"{object_id} 不在当前场景也不在背包中"}
     if object_id in (room.objects if room else []) and obj.hidden:
         return {"ok": False, "error": f"{object_id} 仍处于隐藏状态，当前无法交互"}
+    if obj.hidden_when_flag and state.flags.get(obj.hidden_when_flag):
+        return {"ok": False, "error": f"{object_id} 已消解，不在当前场景"}
 
     aff = world.get_affordance(object_id, verb)
     if not aff:
@@ -1682,6 +1703,10 @@ def call_affordance(object_id: str, verb: str) -> dict:
 
     if aff.requires_flag and not state.flags.get(aff.requires_flag):
         return {"ok": False, "error": f"条件未满足（需要 flag: {aff.requires_flag}）"}
+
+    if aff.requires_armed and not _player_has_weapon(state):
+        return {"ok": False,
+                "error": "需先武装自己——手里得有一把真能用的武器（破局：城外/树林/酒馆各有门路），赤手空拳不够格"}
 
     # Apply effect
     changes = _apply_effect(aff.effect, state, world)
@@ -2654,14 +2679,59 @@ def _write_combat_log(events: list, enc: Encounter, source: str):
         pass  # log failure never blocks game
 
 
+# ── 刷怪（动态遭遇）────────────────────────────────────────────────
+# 老做法：把整池敌人静态摆进场景，进门就全员在场、开战一锅端——别扭。
+# 新做法：标了 "spawn_ground" 的房间，进门时随机【刷】一把（池里抽 1，偶尔 2，或没刷到=安静）。
+# 刷到的写进 state.active_spawns；get_scene / request_combat 只认它。Boss 房（无此标签）
+# 仍用 room.enemies 静态摆放——首领本就该一直等在那儿，不该随机刷。
+SPAWN_CHANCE = 0.7        # 进入刷怪场时遇敌概率（其余=安静一次，可再进重刷）
+SPAWN_PAIR_CHANCE = 0.15  # 遇敌时刷成两只的概率（其余=单只）
+
+
+def _is_spawn_ground(room) -> bool:
+    return bool(room) and "spawn_ground" in getattr(room, "tags", []) and bool(room.enemies)
+
+
+def _roll_spawns(room) -> list:
+    """在刷怪场里随机刷一把敌人，返回 enemy id 列表（可能为空=这次安静）。
+    非刷怪场返回 []（敌人由 room.enemies 静态决定，不走这里）。
+    按各敌人的 spawn_weight 加权抽取——教学怪权重大、精英怪权重小。"""
+    if not _is_spawn_ground(room):
+        return []
+    if random.random() >= SPAWN_CHANCE:
+        return []                              # 这次没遇上
+    pool = list(room.enemies)
+    weights = []
+    for eid in pool:
+        tmpl = SESSION.world.get_enemy(eid)
+        weights.append(getattr(tmpl, "spawn_weight", 1.0) if tmpl else 1.0)
+    count = 2 if (len(pool) and random.random() < SPAWN_PAIR_CHANCE) else 1
+    return [random.choices(pool, weights=weights, k=1)[0] for _ in range(count)]
+
+
+def _scene_enemy_ids(state: GameState, room) -> list:
+    """当前场景【此刻实际存在】的敌人 id：刷怪场看 active_spawns；其余（Boss/固定遭遇）
+    看 room.enemies 静态，但若该房已被打清（_cleared_<room> flag）则不再摆出来。"""
+    if not room:
+        return []
+    if _is_spawn_ground(room):
+        return list(state.active_spawns)
+    if state.flags.get(f"_cleared_{room.id}"):
+        return []                       # 固定遭遇已被清掉，别再阴魂不散
+    return list(room.enemies)
+
+
 def _enemy_profiles_for_scene(state: GameState) -> list:
-    """Return enemy combat profile summaries for the current room."""
+    """Return enemy combat profile summaries for what is actually present right now."""
     world = SESSION.world
     room = world.get_room(state.position)
-    if not room or not room.enemies:
+    if not room:
+        return []
+    enemy_ids = _scene_enemy_ids(state, room)
+    if not enemy_ids:
         return []
     profiles = []
-    for eid in room.enemies:
+    for eid in enemy_ids:
         tmpl = world.get_enemy(eid)
         if not tmpl:
             continue
@@ -2853,12 +2923,13 @@ def request_combat(reason: str, canon: list[str] = None,
     has_canon = bool(canon)
     has_improvised = bool(improvised)
     if not has_canon and not has_improvised:
-        # Check if room has registered enemies
-        if room and room.enemies:
-            canon = list(room.enemies)
+        # 默认打【此刻实际在场】的敌人：刷怪场=已刷到的那几只，Boss 房=静态 room.enemies
+        present = _scene_enemy_ids(state, room)
+        if present:
+            canon = present
             has_canon = True
         else:
-            return {"ok": False, "error": "当前场景无可战斗敌人。请提供 canon 或 improvised 参数。"}
+            return {"ok": False, "error": "当前场景此刻没有敌人。请提供 canon 或 improvised 参数。"}
 
     # Start combat
     result = start_combat(canon=canon, improvised=improvised,
@@ -2987,6 +3058,44 @@ def grant_char_exp(amount: int, reason: str = "") -> dict:
 
 
 @mcp.tool()
+def adjust_gold(amount: int, reason: str = "") -> dict:
+    """增减玩家金币（回廊币）——GM 即兴交易/赏金/赔付/罚没的【权威入口】。
+
+    gold 是 vitals 权威字段：散文里写了"付给铁匠 8 币"、"老板塞给你 5 币"，就【必须】调本工具，
+    否则 HUD 上的金币不动，玩家会困惑。和 NPC 正常买卖全靠它：
+      买东西/贿赂/缴费 → amount 取负（如 -10），再配 add_improvised 把货给玩家；
+      卖货/赏金/道义补偿 → amount 取正（如 +5）。
+    余额不足时自动钳到 0（返回标 clamped=True），别让玩家凭空欠债——除非世界另有设定。
+
+    Args:
+        amount: 变动额，正=进账，负=支出
+        reason: 来源说明（如"卖兔皮给老马罗"/"在酒馆赊账被罚"）
+    """
+    if err := _require_started():
+        return err
+    if amount == 0:
+        return {"ok": False, "error": "amount 不能为 0"}
+    state = SESSION.state
+    before = state.vitals.gold
+    after = before + amount
+    clamped = False
+    if after < 0:
+        after = 0
+        clamped = True
+    state.vitals.gold = after
+    _autosave()
+    return {
+        "ok": True,
+        "amount": amount,
+        "reason": reason,
+        "gold_before": before,
+        "gold": after,
+        "clamped": clamped,
+        "hud": _build_hud(state, SESSION.world),
+    }
+
+
+@mcp.tool()
 def allocate_attr(attr_key: str, points: int = 1) -> dict:
     """将待分配属性点投入指定属性。
 
@@ -3112,6 +3221,12 @@ def end_combat(reason: str = "") -> dict:
     }
 
     SESSION.encounter = None
+    # 刷怪场：战斗了结，在场敌人清空（要再遇敌就走出去重新进场刷一把）
+    state.active_spawns = []
+    # 非刷怪场（Boss/固定遭遇）：胜利后标记此房已清，别再在 get_scene 里阴魂不散
+    cur_room = SESSION.world.get_room(state.position)
+    if victory and cur_room and not _is_spawn_ground(cur_room):
+        state.flags[f"_cleared_{cur_room.id}"] = True
     _autosave()  # 战斗结束、hp 写回 state 后落盘
     return result
 
@@ -3129,6 +3244,7 @@ def _respawn_player(reason: str = "") -> dict:
         respawn_room = "camp"
     state.position = respawn_room
     SESSION.encounter = None                     # 清战斗
+    state.active_spawns = []                      # 回到安全点，清在场刷怪
     _autosave()
     room = SESSION.world.get_room(respawn_room)
     return {
@@ -3734,6 +3850,9 @@ def move(direction: str) -> dict:
     state.position = new_room_id
     expired = _advance_turn(state)
 
+    # ── 刷怪：进入新房间随机刷一把（刷怪场才刷；其余房间清空在场敌人）──
+    state.active_spawns = _roll_spawns(new_room)
+
     # ── 进入新房间：应用 RoomSnapshot 或 on_first_enter ──
     snapshot_applied = _apply_room_snapshot(world, state, new_room)
     first_enter = _apply_on_first_enter(world, state, new_room)
@@ -3756,6 +3875,11 @@ def move(direction: str) -> dict:
         "inventory": _inventory_snapshot(state),
         "turn": state.turn,
     }
+    # 刷到怪就显式带出来，提示 GM「这一步撞上了遭遇」（空=安静，别硬写怪）；
+    # 一并带在场敌人 profile，供富前端渲染"敌在场"卡（不必再调 get_scene）。
+    if state.active_spawns:
+        result["spawned"] = list(state.active_spawns)
+        result["enemy_profiles"] = _enemy_profiles_for_scene(state)
     if reactive_fired:
         result["reactive_fired"] = reactive_fired
     return result
@@ -4665,6 +4789,7 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
         "skills": [_serialize_skill(s) for s in state.skills],
         "equipped": state.equipped,
         "pending_contract": state.pending_contract,   # §12：未消费的危机合约
+        "active_spawns": state.active_spawns,          # 刷怪：当前在场敌人
         "player_attrs": state.player_attrs,
         "world_attrs": state.world_attrs,
     }
@@ -4794,6 +4919,7 @@ def _session_from_data(data: dict) -> Optional[Session]:
         skills=_load_skills(data.get("skills", [])),
         equipped=data.get("equipped", {}),
         pending_contract=data.get("pending_contract"),   # §12
+        active_spawns=data.get("active_spawns", []),      # 刷怪：当前在场敌人
         player_attrs=_clean_custom_attributes(data.get("player_attrs", {})),
         world_attrs=_clean_custom_attributes(data.get("world_attrs", {})),
     )

@@ -185,6 +185,13 @@ class TextAdventureApp(App):
                     if state["placeholder"] is not None:
                         self.call_from_thread(
                             state["placeholder"].update, f"⋯ GM 正在查看（{payload['name']}）")
+                elif kind == "reset":
+                    # 中间轮抢跑叙事 → 丢掉已流出的这段，等最后一轮重新流
+                    buf.clear()
+                    state["text"] = ""
+                    if state["live"] is not None:
+                        self.call_from_thread(state["live"].remove)
+                        state["live"] = None
                 elif kind == "delta":
                     buf.append(payload)
                     if "\n" in payload or sum(len(x) for x in buf) >= FLUSH_CHARS:

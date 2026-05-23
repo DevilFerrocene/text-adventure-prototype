@@ -234,5 +234,82 @@ class ImprovisedWeaponTest(unittest.TestCase):
         self.assertEqual(len(imp), 6)
 
 
+class RegistrationNodeTest(unittest.TestCase):
+    """明确的登记烙印节点：登记官 register（须已武装）→ 开放武器架。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def test_registrar_present_in_camp(self):
+        sc = mcp_server.get_scene()["scene"]
+        self.assertTrue(any(o["id"] == "registry_officer" for o in sc["objects"]))
+
+    def test_register_blocked_when_unarmed(self):
+        r = mcp_server.call_affordance("registry_officer", "register")
+        self.assertFalse(r["ok"])
+        self.assertFalse(mcp_server.SESSION.state.flags.get("attacker_registered"))
+
+    def test_register_succeeds_when_armed_and_unlocks_rack(self):
+        # 破局拿到第一把武器（即兴木棍）后才够格登记
+        mcp_server.add_improvised([{
+            "id": "imp_stick", "name": "木棍", "category": "tool",
+            "equip_slot": "weapon", "damage_expr": "1d4"}])
+        r = mcp_server.call_affordance("registry_officer", "register")
+        self.assertTrue(r["ok"])
+        self.assertTrue(mcp_server.SESSION.state.flags.get("attacker_registered"))
+        # 登记后武器架解锁
+        self.assertTrue(mcp_server.call_affordance("weapon_rack", "take_sword")["ok"])
+
+
+class AdjustGoldTest(unittest.TestCase):
+    """GM 即兴操作金币：和 NPC 正常买卖的权威入口。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def test_earn_and_spend(self):
+        mcp_server.SESSION.state.vitals.gold = 0
+        self.assertEqual(mcp_server.adjust_gold(12, "卖兔皮")["gold"], 12)
+        r = mcp_server.adjust_gold(-5, "买绷带")
+        self.assertEqual(r["gold"], 7)
+        self.assertFalse(r["clamped"])
+
+    def test_overspend_clamps_to_zero(self):
+        mcp_server.SESSION.state.vitals.gold = 3
+        r = mcp_server.adjust_gold(-10, "想买买不起的东西")
+        self.assertEqual(r["gold"], 0)
+        self.assertTrue(r["clamped"])
+
+    def test_zero_rejected(self):
+        self.assertFalse(mcp_server.adjust_gold(0)["ok"])
+
+
+class TavernOneShotTest(unittest.TestCase):
+    """酒馆斗殴只触发一次：brawl_done 置位后从场景隐去，不再每次进门重演。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+        self.assertTrue(mcp_server.move("east")["ok"])  # 营地 → 酒馆
+
+    def _brawl_visible(self) -> bool:
+        sc = mcp_server.get_scene()["scene"]
+        return any(o["id"] == "tavern_brawl" for o in sc["objects"])
+
+    def test_visible_before_resolved(self):
+        self.assertTrue(self._brawl_visible())
+
+    def test_hidden_after_flag_set_by_gm(self):
+        # 玩家只看戏没下场 → GM 收尾置 brawl_done
+        mcp_server.gm_set_flag("brawl_done", True)
+        self.assertFalse(self._brawl_visible())
+        # 隐去后不可再交互
+        self.assertFalse(mcp_server.call_affordance("tavern_brawl", "back_guards")["ok"])
+
+    def test_choosing_side_hides_it(self):
+        mcp_server.call_affordance("tavern_brawl", "back_adventurers")
+        self.assertTrue(mcp_server.SESSION.state.flags.get("brawl_done"))
+        self.assertFalse(self._brawl_visible())
+
+
 if __name__ == "__main__":
     unittest.main()

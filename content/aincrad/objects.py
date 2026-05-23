@@ -33,6 +33,9 @@ def add_all(world):
         named_tags=["brawl", "faction_choice"],
         traits=["one_shot"],
         takable=False,
+        # 一次性事件：选过边（任一 affordance 置 brawl_done）或 GM 收尾置 brawl_done 后，
+        # 斗殴从场景隐去，不再每次进门重演。
+        hidden_when_flag="brawl_done",
         affordances={
             "back_adventurers": Affordance(
                 verb="back_adventurers",
@@ -172,6 +175,38 @@ def add_all(world):
                 requires_flag="attacker_registered",
                 effect={"reveals_objects": ["rack_dagger"],
                         "clues": ["匕首握在掌心，刃薄到能藏进腰带。"]},
+            ),
+        },
+    ))
+    # 登记烙印的明确节点：武器架旁的登记台 + 登记官。
+    # 「登记」需玩家先武装自己（requires_armed）——破局拿到第一把武器后，才够格在册。
+    world.add_object(GameObject(
+        id="registry_officer",
+        name="回廊登记官·独臂奥兰",
+        description=(
+            "武器架旁支着一张掉漆的折叠桌，后面坐着个空了一只袖管的老登记官，"
+            "面前摊着厚厚一本卷了边的名册和一枚烧得通红的烙印铁。他头也不抬："
+            "「登记？可以。规矩就一条——空着手的不收。」"
+            "他用仅剩的那只手敲了敲名册，「回廊不给赤手空拳的人盖章，那等于送你去死。"
+            "弄到家伙、能自己保命了再来，烙印随你领，军备架、迷宫，都给你开。」"
+        ),
+        kind="npc",
+        named_tags=["registrar", "official"],
+        traits=["veteran", "gatekeeper"],
+        takable=False,
+        affordances={
+            "register": Affordance(
+                verb="register",
+                desc="登记造册、烙上回廊烙印，成为在册攻略者（须已武装）",
+                requires_armed=True,   # 引擎硬门：背包里得有一把真武器
+                effect={
+                    "flags": {"attacker_registered": True},
+                    "clues": [
+                        "奥兰瞥了眼你手里的家伙，「凑合。」他翻开名册，烙印铁按上你左腕——"
+                        "一阵灼痛，皮下浮起一道淡蓝的回廊纹。「在册了。军备架随你领，迷宫的门也认你了。"
+                        "活着回来，新人。」——你头一回，在这座塔里有了名字。",
+                    ],
+                },
             ),
         },
     ))
