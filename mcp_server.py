@@ -1185,6 +1185,49 @@ def _run_on_destroyed(obj: "GameObject", state: GameState, world: GameWorld) -> 
     return outcome
 
 
+def _make_drop_item(drop: dict, state: GameState) -> InventoryItem:
+    """从 content 作者写的 drop dict 造一件背包物（内容受信任，不走即兴有界校验）。
+    id 唯一化（同一棵树可掉多根枝条）；ttl 默认永久。"""
+    base = drop.get("id", "drop")
+    uid = f"imp_{base}_{state.turn}_{random.randint(100, 999)}"
+    return InventoryItem(
+        id=uid, name=drop.get("name", "掉落物"), desc=drop.get("desc", ""),
+        kind=drop.get("kind", "tool"), tags=list(drop.get("tags", [])),
+        ttl=drop.get("ttl", -1),
+        equip_slot=drop.get("equip_slot", ""), damage_expr=drop.get("damage_expr", ""),
+        damage_type=drop.get("damage_type", "blunt"), scaling=dict(drop.get("scaling", {})),
+        reach=drop.get("reach", 1), defense=drop.get("defense", 0),
+        use_effect=dict(drop.get("use_effect", {})),
+    )
+
+
+def _process_on_hit(obj: "GameObject", state: GameState) -> list:
+    """场景物【被打但未摧毁】时按概率掉落（如砍树掉枝条）。返回掉落明细 + 文案。"""
+    out = []
+    for entry in getattr(obj, "on_hit", []):
+        if not isinstance(entry, dict):
+            continue
+        if random.random() < float(entry.get("chance", 1.0)):
+            drop = entry.get("drop")
+            rec = {"hit": True}
+            if drop:
+                item = _make_drop_item(drop, state)
+                state.add_item(item)
+                rec["dropped"] = item.id
+                rec["name"] = item.name
+            clue = entry.get("clue")
+            if clue:
+                state.add_clue(clue)
+                rec["clue"] = clue
+            out.append(rec)
+        else:
+            miss = entry.get("miss_clue")
+            if miss:
+                state.add_clue(miss)
+                out.append({"hit": False, "clue": miss})
+    return out
+
+
 # ── §6 Phase 3-5：Skill 技能树 ────────────────────────────────────
 
 def _get_skill(state: GameState, skill_id: str) -> Optional[Skill]:
@@ -3639,6 +3682,13 @@ def deal_damage(target: str, amount: int, damage_type: str = "blunt",
         payload["on_destroyed"] = _run_on_destroyed(obj, state, world)
         payload["scene"] = _room_snapshot(world, state)
         _autosave()  # on_destroyed 改了 flags/物体，落盘
+    elif getattr(obj, "on_hit", None):
+        # 高血量场景物（树/矿脉…）：砍不倒，但每下按概率掉东西（树枝等）
+        drops = _process_on_hit(obj, state)
+        if drops:
+            payload["on_hit"] = drops
+            payload["inventory"] = _inventory_snapshot(state)  # 让 GM 看见新得的物
+            _autosave()
 
     return payload
 

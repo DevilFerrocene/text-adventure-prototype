@@ -386,12 +386,12 @@ def register(world: GameWorld):
         base_description=(
             "出了镇门就是草原：草高及腰，雾低过膝，十步之外的景物开始在乳白里融化。"
             "风吹草动时你以为是眼花，但那些晃动里总有几处逆着风向——那是怪。"
-            "近处一棵孤零零的枯树杵在草里，断枝横七竖八，一看就经得起几下踹。"
-            "西边草色压暗，连成一道黑黢黢的树林轮廓；北面雾最浓处立着几根青石柱，是迷宫的入口。"
+            "西边草色压暗，连成一道黑黢黢的树林轮廓——空着手的话，那林子里或许能找到趁手的家伙。"
+            "北面雾最浓处立着几根青石柱，是迷宫的入口。"
             "脚边的草丛里，一团雪白的东西抽动着鼻子，长耳朵转向了你。"
         ),
         exits={"south": "camp", "north": "labyrinth", "west": "forest_edge"},
-        objects=["lone_tree", "field_chest", "mist_shrine", "tall_grass",
+        objects=["field_chest", "mist_shrine", "tall_grass",
                  "erin_talisman", "mist_cave_entrance"],
         area="苍穹回廊·第一层",
         zone="雾语草原",
@@ -406,15 +406,16 @@ def register(world: GameWorld):
         name="雾语树林",
         base_description=(
             "草原西侧的树林，松木黑而密，针叶在脚下铺了厚厚一层，踩上去几乎没声。"
-            "雾在这里更重，能见度不足五步——你听得见自己绕过每一棵树时呼吸的回声。"
-            "林子里没有路，方向感很快就会被树干和雾吃掉；老话说，进雾语林靠的不是地图，是运气。"
-            "隐约地，深处有个方方正正的轮廓，像是一座被遗忘的小木屋。"
+            "粗壮的树干随处可及，低处不少枯枝半垂着——拿硬东西狠狠招呼几下，"
+            "总能震下一根像样的、能当棍子使的枝条。"
+            "雾在这里更重，能见度不足五步；林子里没有路，方向感很快被树干和雾吃掉，"
+            "老话说进雾语林靠的不是地图，是运气。隐约地，深处有个方方正正的轮廓，像座被遗忘的小木屋。"
         ),
         exits={"east": "plains", "in": "forester_hut"},
         # 闯进深处的小屋需要一点运气——GM 让玩家掷一把（迷路/野兽/雾），
         # 过了再 gm_set_flag("forest_path_found", True, unlock_exit="in")。
         locked_exits={"in": "forest_path_found"},
-        objects=["dense_pines"],
+        objects=["forest_trees", "dense_pines"],
         area="苍穹回廊·第一层",
         zone="雾语树林",
         coords=(-1, 1),
@@ -914,48 +915,6 @@ def register(world: GameWorld):
         },
     ))
 
-    # ── 破局路二：枯树 → 木棍（1d4）──────────────────────────────────
-    world.add_object(GameObject(
-        id="lone_tree",
-        name="孤零的枯树",
-        description=(
-            "草原里一棵早就死透的枯树，灰白的树干裂着缝，断枝横七竖八地支棱着。"
-            "有几根粗细正合手的枝桠，看着就能掰下来当根棍子使——"
-            "对一个连把小刀都没有的人来说，这已经是天上掉下来的武器了。"
-        ),
-        kind="scenery",
-        traits=["improvised_weapon_source"],
-        takable=False,
-        hp=4, max_hp=4, ac=3,    # 枯木易断：砸/踹几下也能弄断（deal_damage 亦可）
-        on_destroyed=[{
-            "reveals_objects": ["wooden_club"],
-            "flags": {"got_first_weapon": True},
-            "clues": ["枯木"
-                      "应声而断，一根半臂长、握处正好的硬枝滚到脚边——你的第一件武器。"],
-        }],
-        affordances={
-            "break_branch": Affordance(
-                verb="break_branch",
-                desc="掰下一根趁手的硬枝当棍子",
-                effect={
-                    "reveals_objects": ["wooden_club"],
-                    "flags": {"got_first_weapon": True},
-                    "clues": ["你架住一根粗枝，全身的重量压上去——咔啦一声脆响，"
-                              "半臂长的硬木枝到了手里。掂了掂，能抡，能戳。聊胜于拳头。"],
-                },
-            ),
-        },
-    ))
-    world.add_object(GameObject(
-        id="wooden_club",
-        name="枯木棍",
-        description="从枯树上掰下的一截硬木枝，握处被你攥得发亮。没开刃，但抡圆了砸下去，比赤手强得多。1d4 钝击。",
-        kind="tool", hidden=True, takable=True,
-        traits=["weapon", "blunt", "improvised"],
-        equip_slot="weapon", damage_expr="1d4", damage_type="blunt",
-        scaling={"str": 1.0}, reach=1,
-    ))
-
     # ── 草原物体 ──────────────────────────────────────────────────
     world.add_object(GameObject(
         id="field_chest",
@@ -1054,6 +1013,33 @@ def register(world: GameWorld):
                         "flags": {"mist_cave_found": True}},
             ),
         },
+    ))
+
+    # ── 破局路二：砍林间的树，碰运气震下树枝当武器（1d4）──────────────
+    world.add_object(GameObject(
+        id="forest_trees",
+        name="林间的树",
+        description=(
+            "一片饱经风霜的老松，树干糙得硌手，低处枯枝横生。"
+            "你砍不倒它们——也没必要；但拿硬家伙狠狠招呼树干，"
+            "运气好时总能震落一根趁手的枝条，对赤手空拳的人来说已是天降之兵。"
+        ),
+        kind="scenery",
+        traits=["tree", "weapon_source"],
+        takable=False,
+        hp=200, max_hp=200, ac=4,   # 高血量：砍不倒，永远是场景物（hp 冻结、不亮血条）
+        # 每砍一下（未摧毁）按概率掉一根树枝（1d4 钝击近战）
+        on_hit=[{
+            "chance": 0.5,
+            "drop": {"id": "branch", "name": "断落的树枝",
+                     "desc": "从树上震下的一截硬枝，握处粗细正好。没开刃，抡圆了砸下去比拳头强得多。1d4 钝击。",
+                     "kind": "tool", "equip_slot": "weapon",
+                     "damage_expr": "1d4", "damage_type": "blunt",
+                     "scaling": {"str": 1.0}, "reach": 1,
+                     "tags": ["weapon", "improvised"]},
+            "clue": "硬家伙重重砸在树干上——咔啦一声，一根半臂长的枯枝应声折断、滚到脚边。能抡，能戳。",
+            "miss_clue": "树干闷响着震得你虎口发麻，零星树皮剥落，但没有像样的枝条掉下来。再来。",
+        }],
     ))
 
     # ── 破局路三：树林 → 守林员小屋 → 手斧（1d6）──────────────────────
@@ -1410,8 +1396,8 @@ def register(world: GameWorld):
                 # 阶段机（GM 用 update_quest 推进）：
                 #   penniless → armed（搞到第一把武器：木棍/手斧/或别的）
                 #   → first_blood（凭它弄死城外的杀人兔）→ standing（在镇上有了立足之地）
-                # 三条明路（非唯一）：①酒馆斗殴搏个道义补偿 ②攻击树得木棍
-                #   ③闯树林进废弃守林员小屋拿手斧。也可即兴，GM 用 gm_set_flag 裁定。
+                # 三条明路（非唯一）：①酒馆斗殴搏个道义补偿 ②去西边树林砍树、碰运气震下树枝
+                #   ③闯树林深处进废弃守林员小屋拿手斧。也可即兴，GM 用 gm_set_flag 裁定。
                 known_facts=[
                     "你 hp 上限只有 6，赤手空拳只有 1d1，几乎打不动任何东西",
                     "城外的杀人兔有 8 点血、会 1d4 撕咬，硬刚必死",

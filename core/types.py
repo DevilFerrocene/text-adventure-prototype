@@ -504,6 +504,9 @@ class GameObject:
     indestructible: bool = False                   # 墙/大门/大地标 True
     damage_types_resist: Dict[str, float] = field(default_factory=dict)  # 空=全 1.0
     on_destroyed: List[Dict[str, Any]] = field(default_factory=list)     # list[Step]，hp 归零触发
+    # 每次被打【且未摧毁】时按概率触发的掉落（高血量场景物用，如树砍掉枝条）。
+    # entry: {"chance":0..1, "drop":{物品字段}, "clue":命中文案, "miss_clue":落空文案}
+    on_hit: List[Dict[str, Any]] = field(default_factory=list)
     buffs: List["Buff"] = field(default_factory=list)                    # 着火/中毒等持续效应
     # §11 装备/消耗品数据——拾取时由 InventoryItem.from_object 迁移到背包物
     equip_slot: str = ""            # 槽位 key（weapon/armor/...），空=不可装备

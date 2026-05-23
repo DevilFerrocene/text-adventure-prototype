@@ -1,5 +1,6 @@
 """破局冷开局：赤贫起手 + 三条破局路 + 杀人兔门槛。"""
 import unittest
+from unittest.mock import patch
 
 import mcp_server
 
@@ -62,34 +63,50 @@ class PathTavernTest(unittest.TestCase):
 
 
 class PathTreeTest(unittest.TestCase):
-    """破局路二：攻击/掰枯树 → 木棍（1d4）。"""
+    """破局路二：进树林砍树，碰运气震下树枝（1d4）。树砍不倒（高血量）。"""
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game("aincrad")["ok"])
-        self.assertTrue(mcp_server.move("north")["ok"])  # 营地 → 草原
+        mcp_server.SESSION.state.position = "forest_edge"
 
     def tearDown(self):
         if mcp_server.SESSION.in_combat:
             mcp_server.end_combat(reason="test cleanup")
 
-    def test_break_branch_yields_club(self):
-        r = mcp_server.call_affordance("lone_tree", "break_branch")
+    def _branches(self):
+        return [i for i in mcp_server.SESSION.state.inventory if i.id.startswith("imp_branch")]
+
+    def test_lucky_chop_drops_equippable_branch(self):
+        with patch("mcp_server.random.random", return_value=0.0):   # 必掉
+            r = mcp_server.deal_damage(target="forest_trees", amount=5, reason="砍树")
         self.assertTrue(r["ok"])
-        self.assertTrue(mcp_server.SESSION.state.flags.get("got_first_weapon"))
-        self.assertTrue(mcp_server.take_item("wooden_club")["ok"])
-        eq = mcp_server.equip("wooden_club")
-        self.assertTrue(eq["ok"])
+        self.assertFalse(r.get("destroyed"))     # 树砍不倒
+        self.assertTrue(r.get("on_hit"))
+        br = self._branches()
+        self.assertEqual(len(br), 1)
+        self.assertEqual(br[0].damage_expr, "1d4")
+        self.assertEqual(br[0].equip_slot, "weapon")
+        self.assertTrue(mcp_server.equip(br[0].id)["ok"])
 
-    def test_destroying_tree_also_yields_club(self):
-        # 用 deal_damage 砸断枯树（hp 4），on_destroyed 也给木棍
-        r = mcp_server.deal_damage(target="lone_tree", amount=10, reason="一脚踹断")
-        self.assertTrue(r["destroyed"])
-        self.assertIn("wooden_club", r["on_destroyed"]["revealed"])
+    def test_unlucky_chop_no_drop(self):
+        with patch("mcp_server.random.random", return_value=0.99):  # 必不掉
+            r = mcp_server.deal_damage(target="forest_trees", amount=5)
+        self.assertTrue(r["ok"])
+        self.assertFalse(r.get("destroyed"))
+        self.assertEqual(len(self._branches()), 0)
 
-    def test_club_is_1d4_weapon(self):
-        club = mcp_server.SESSION.world.get_object("wooden_club")
-        self.assertEqual(club.damage_expr, "1d4")
-        self.assertEqual(club.equip_slot, "weapon")
+    def test_tree_not_destroyed_by_big_hit(self):
+        with patch("mcp_server.random.random", return_value=0.99):
+            r = mcp_server.deal_damage(target="forest_trees", amount=50)
+        self.assertFalse(r["destroyed"])         # 高血量，砍不倒
+
+    def test_multiple_chops_stack(self):
+        # 砍出多根树枝都能留着（即兴物已无持有上限、不过期）
+        with patch("mcp_server.random.random", return_value=0.0):
+            mcp_server.deal_damage(target="forest_trees", amount=3)
+            mcp_server.inspect_object("forest_trees")   # 推进回合 → id 错开
+            mcp_server.deal_damage(target="forest_trees", amount=3)
+        self.assertGreaterEqual(len(self._branches()), 2)
 
 
 class PathForestTest(unittest.TestCase):
