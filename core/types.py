@@ -21,8 +21,8 @@ IMPROVISED_SIZES = ["tiny", "small", "medium"]
 
 MAX_IMPROVISED_IN_INVENTORY = 4
 MAX_IMPROVISED_PER_TURN = 2
-IMPROVISED_DEFAULT_TTL = 3
-IMPROVISED_MAX_TTL = 5
+IMPROVISED_DEFAULT_TTL = -1   # 默认永久不过期（捡的/造的东西该留着）；几乎不占存储
+IMPROVISED_MAX_TTL = 5        # 如要限时（火把/烟雾这类天生会灭的），GM 显式给 1-5
 
 # 即兴装备的有界白名单：破局靠捡破烂当武器，但绝不许即兴出神兵/远程/元素。
 IMPROVISED_WEAPON_DICE = {"1d2", "1d3", "1d4"}        # 破烂武器只能弱（≤木棍档）

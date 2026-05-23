@@ -659,10 +659,12 @@ def _validate_improvised(raw_items: list, state: GameState) -> Tuple[List[Improv
             continue
         if size not in IMPROVISED_SIZES:
             size = "small"
+        # ttl：≤0 → 永久(-1)，默认即永久；正数 → 限时，钳到 1..MAX（火把/烟雾这类）
         try:
-            ttl = max(1, min(int(ttl_raw), IMPROVISED_MAX_TTL))
+            ttl_int = int(ttl_raw)
         except (TypeError, ValueError):
-            ttl = IMPROVISED_DEFAULT_TTL
+            ttl_int = -1
+        ttl = -1 if ttl_int <= 0 else min(ttl_int, IMPROVISED_MAX_TTL)
 
         # ── 即兴装备/消耗字段：可选，有界（破局靠捡破烂当武器，但不许造神兵）──
         equip_slot = raw.get("equip_slot", "") or ""
@@ -3996,7 +3998,9 @@ def add_improvised(items: list) -> dict:
         items: 物品列表，每个对象：
                { "id": "imp_xxx", "name": "...", "desc": "...",
                  "category": "fragment|consumable|trinket|tool|clue",
-                 "size": "tiny|small|medium", "ttl": 1-5, "tags": [] }
+                 "size": "tiny|small|medium", "ttl": 省略, "tags": [] }
+               ttl 默认【永久】（不写=不过期，捡的/造的东西留着）；只有天生会消失的
+               （燃着的火把、飘散的烟雾）才显式给 1-5 限时。
 
     即兴【武器/装备/消耗】（破局核心：捡破烂当武器）——加这些字段，引擎有界校验后
     真能装备开打/嗑（超规自动钳，不报错）：

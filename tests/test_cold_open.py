@@ -189,6 +189,22 @@ class ImprovisedWeaponTest(unittest.TestCase):
         self.assertTrue(mcp_server.move("north")["ok"])   # 营地 → 草原
         self.assertTrue(mcp_server.SESSION.state.has_item("imp_bottle"))
 
+    def test_default_ttl_is_permanent(self):
+        # 默认不过期：推进多个回合仍在
+        mcp_server.add_improvised([{"id": "imp_keep", "name": "护身石", "category": "trinket"}])
+        self.assertEqual(mcp_server.SESSION.state.get_item("imp_keep").ttl, -1)
+        for _ in range(8):
+            mcp_server.inspect_object("teleport_crystal")   # 每次推进一回合 + tick_ttl
+        self.assertTrue(mcp_server.SESSION.state.has_item("imp_keep"))
+
+    def test_explicit_finite_ttl_still_expires(self):
+        # 显式限时（火把/烟雾）仍按 ttl 到期消失
+        mcp_server.add_improvised([{"id": "imp_torch", "name": "火把", "category": "tool", "ttl": 2}])
+        self.assertEqual(mcp_server.SESSION.state.get_item("imp_torch").ttl, 2)
+        for _ in range(2):
+            mcp_server.inspect_object("teleport_crystal")
+        self.assertFalse(mcp_server.SESSION.state.has_item("imp_torch"))
+
 
 if __name__ == "__main__":
     unittest.main()
