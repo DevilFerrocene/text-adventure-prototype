@@ -2998,6 +2998,69 @@ def end_combat(reason: str = "") -> dict:
     return result
 
 
+# ── 软重生（死亡处理）─────────────────────────────────────────────
+# 设计：死亡=被回廊烙印拽回上次共鸣的传送水晶。回满血、掉一半金币（向下取整）。
+# 战斗中玩家倒下自动触发；探索/叙事死亡由 GM 裁定后调 respawn 工具。
+def _respawn_player(reason: str = "") -> dict:
+    state = SESSION.state
+    state.vitals.hp = state.vitals.max_hp        # 回满血
+    lost_gold = state.vitals.gold // 2           # 掉一半金币
+    state.vitals.gold -= lost_gold
+    respawn_room = state.flags.get("respawn_room") or "camp"
+    if not SESSION.world.get_room(respawn_room):
+        respawn_room = "camp"
+    state.position = respawn_room
+    SESSION.encounter = None                     # 清战斗
+    _autosave()
+    room = SESSION.world.get_room(respawn_room)
+    return {
+        "respawned": True,
+        "reason": reason,
+        "respawn_room": respawn_room,
+        "respawn_room_name": room.name if room else respawn_room,
+        "gold_lost": lost_gold,
+        "hp_restored": state.vitals.hp,
+    }
+
+
+def _maybe_player_death(enc, events) -> dict | None:
+    """战斗中玩家倒下(hp<=0)→收尾战斗 + 软重生，返回结算 dict；否则 None。"""
+    player_cb = enc.combatants.get("player")
+    if player_cb is None or not (player_cb.is_dead or player_cb.hp <= 0):
+        return None
+    player_cb.is_dead = True
+    events.append(CombatEvent(kind="player_down", actor="player", target="", detail={}))
+    _write_combat_log([events[-1]], enc, "player_death")
+    end_combat(reason="玩家倒下")                  # 写回(hp 0)+清 encounter
+    respawn = _respawn_player(reason="在战斗中倒下")  # 覆盖：满血/半金/回水晶
+    return {
+        "ok": True,
+        "events": [
+            {"kind": e.kind, "actor": e.actor, "target": e.target, "detail": e.detail}
+            for e in events
+        ],
+        "encounter": {"active": False, "combat_ended": True},
+        "next_actor": None,
+        "player_died": True,
+        "respawn": respawn,
+    }
+
+
+@mcp.tool()
+def respawn(reason: str = "") -> dict:
+    """玩家死亡软重生：回满血、掉一半金币、被回廊烙印拽回上次共鸣的传送水晶（默认营地）。
+
+    战斗中玩家倒下会【自动】触发软重生（declare_intent 返回里带 player_died/respawn）；
+    探索/叙事死亡（坠崖、陷阱、中毒、剧情处决等）由 GM 裁定后调本工具收尾。
+
+    Args:
+        reason: 死因（叙事用，如"踩中迷宫陷阱被尖刺贯穿"）。
+    """
+    if err := _require_started():
+        return err
+    return {"ok": True, **_respawn_player(reason=reason)}
+
+
 # §14-R2 行动经济：每意图的默认动作耗费。仅 Encounter.action_economy=True 时门控。
 # major=大动（攻击/防御/逃跑/用物，每回合 1 个）；minor=小动（走位，每回合 1 个）；
 # free=不占槽（主动结束回合）。技能可在 ActiveSkill.action_cost 自定义（暂未接入本工具）。
@@ -3247,6 +3310,10 @@ def declare_intent(actor: str, intent: str, target: str = "",
     enc.log.extend(events)
     _write_combat_log(events, enc, "declare_intent")
 
+    # ── 玩家倒下 → 软重生（优先于一切回合推进/行动经济）──
+    if (death := _maybe_player_death(enc, events)) is not None:
+        return death
+
     # ── §14-R2：行动经济下，未耗尽两槽且未显式 end_turn → 留在同一行动者，回合不过 ──
     if econ:
         turn_over = (intent == "end_turn") or (combatant.acted_major and combatant.acted_minor)
@@ -3307,6 +3374,9 @@ def declare_intent(actor: str, intent: str, target: str = "",
         enc.round += 1
         # §9/E2：一整轮战斗结束 → 所有 bearer 的 buff tick（流血/灼烧/过期）
         events.extend(_tick_combat_round(enc, SESSION.state))
+        # 流血/灼烧把玩家 tick 死 → 同样软重生
+        if (death := _maybe_player_death(enc, events)) is not None:
+            return death
 
     # §14-R2：新行动者的回合开始 → 清空其动作槽（大动/小动各一）
     if econ:
