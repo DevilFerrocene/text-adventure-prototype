@@ -621,11 +621,15 @@ def _clean_custom_attributes(raw_attrs: dict) -> dict:
 
 
 def _validate_improvised(raw_items: list, state: GameState) -> Tuple[List[ImprovisedItem], List[str]]:
-    """7-gate validation. Returns (accepted, rejection_reasons)."""
-    existing_imp = sum(1 for i in state.inventory if i.id.startswith("imp_"))
-    slots = MAX_IMPROVISED_IN_INVENTORY - existing_imp
-    if slots <= 0:
-        return [], ["即兴物品栏已满（上限4个）"]
+    """改良校验。Returns (accepted, rejection_reasons)。
+    即兴物品【无持有上限】（MAX_IMPROVISED_IN_INVENTORY≤0=无限）；单次仍受每回合上限约束。"""
+    if MAX_IMPROVISED_IN_INVENTORY > 0:
+        existing_imp = sum(1 for i in state.inventory if i.id.startswith("imp_"))
+        slots = MAX_IMPROVISED_IN_INVENTORY - existing_imp
+        if slots <= 0:
+            return [], [f"即兴物品栏已满（上限 {MAX_IMPROVISED_IN_INVENTORY} 个）"]
+    else:
+        slots = MAX_IMPROVISED_PER_TURN   # 无持有上限；只受单回合上限约束
 
     accepted = []
     reasons = []

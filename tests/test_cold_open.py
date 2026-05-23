@@ -205,6 +205,17 @@ class ImprovisedWeaponTest(unittest.TestCase):
             mcp_server.inspect_object("teleport_crystal")
         self.assertFalse(mcp_server.SESSION.state.has_item("imp_torch"))
 
+    def test_no_holding_cap(self):
+        # 无持有上限：跨多回合攒到 6 件即兴物品，全都留着（旧上限 4 已废）
+        for t in range(3):
+            mcp_server.add_improvised([
+                {"id": f"imp_a{t}", "name": f"杂物{t}a", "category": "trinket"},
+                {"id": f"imp_b{t}", "name": f"杂物{t}b", "category": "trinket"},
+            ])
+            mcp_server.inspect_object("teleport_crystal")  # 推进回合，重置每回合上限
+        imp = [i for i in mcp_server.SESSION.state.inventory if i.id.startswith("imp_")]
+        self.assertEqual(len(imp), 6)
+
 
 if __name__ == "__main__":
     unittest.main()

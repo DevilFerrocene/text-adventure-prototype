@@ -19,8 +19,8 @@ IMPROVISED_CATEGORIES = {
 
 IMPROVISED_SIZES = ["tiny", "small", "medium"]
 
-MAX_IMPROVISED_IN_INVENTORY = 4
-MAX_IMPROVISED_PER_TURN = 2
+MAX_IMPROVISED_IN_INVENTORY = 0   # 0 = 无持有上限（会想到"塞满背包"的人早玩懂了，没必要防）
+MAX_IMPROVISED_PER_TURN = 2       # 单回合最多新增几个（仅防一次刷一堆，不是持有上限）
 IMPROVISED_DEFAULT_TTL = -1   # 默认永久不过期（捡的/造的东西该留着）；几乎不占存储
 IMPROVISED_MAX_TTL = 5        # 如要限时（火把/烟雾这类天生会灭的），GM 显式给 1-5
 
