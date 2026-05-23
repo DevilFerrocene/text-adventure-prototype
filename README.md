@@ -118,7 +118,7 @@ GM 会带你进入苍穹回廊的营地——6 点血、空着两手、一个铜
 mcp_server.py          # 游戏引擎 + 42 个工具（核心）
 core/types.py          # 数据模型：Modifier/Buff/Skill/RuleBook/Combatant/GameObject…
 runtime/game_world.py  # 世界容器：房间/物体/敌人/技能/规则书注册表
-content/aincrad.py     # 示例世界「苍穹回廊」（逐层攻略）
+content/aincrad/       # 示例世界「苍穹回廊」（拆包：canon/enemies/skills/rooms/objects/state）
 standalone/            # 独立运行层：config / tools(工具桥) / agent(loop) / prompt / tui / cli
 .claude/skills/play/   # GM skill（导演 prompt，与 .agents/ 同步）
 .agents/skills/play/
@@ -144,7 +144,10 @@ python -m pytest tests/ -q
 
 ## 写你自己的世界
 
-content 是纯数据。照着 `content/aincrad.py` 写一份新模块——房间 `Room`、物体 `GameObject`、敌人 `EnemyTemplate`、技能 `Skill`、任务 `QuestEntry`，可选一份 `RuleBook`（自定义该世界的属性表/装备槽，不写就用默认四属性）——然后在 `mcp_server.py` 的 `WORLDS` 字典里注册即可。物体的 `on_destroyed`、affordance 的 `effect`、武器的 `scaling` 都复用同一套数据 DSL，无需改引擎。
+content 是纯数据。照着 `content/aincrad/` 写一份新世界——可以是单文件 `content/<world>.py`，也可以像 aincrad 那样拆成包（`canon` 世界观+规则书 / `enemies` / `skills` / `rooms` / `objects` / `state` 初始态，`__init__.register()` 组装）。引擎只认 `register(world)` 这一个入口，单文件还是拆包对它透明。写好后在 `mcp_server.py` 的 `WORLDS` 字典里注册即可。
+
+- **零件**：房间 `Room`、物体 `GameObject`、敌人 `EnemyTemplate`、技能 `Skill`、任务 `QuestEntry`，可选 `RuleBook`（自定义属性表/装备槽/徒手伤害，不写就用默认）。物体的 `on_destroyed`/`on_hit`、affordance 的 `effect`、武器的 `scaling` 都复用同一套数据 DSL，无需改引擎。
+- **改完先校验**：`python -m standalone.cli --check` 会跑 `GameWorld.validate()`，把"出口/物体/敌人/技能等字符串 id 拼错"在作者期就报出来（人话报错），不必等玩到那里才崩。
 
 ---
 
