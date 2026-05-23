@@ -24,6 +24,14 @@ MAX_IMPROVISED_PER_TURN = 2
 IMPROVISED_DEFAULT_TTL = 3
 IMPROVISED_MAX_TTL = 5
 
+# 即兴装备的有界白名单：破局靠捡破烂当武器，但绝不许即兴出神兵/远程/元素。
+IMPROVISED_WEAPON_DICE = {"1d2", "1d3", "1d4"}        # 破烂武器只能弱（≤木棍档）
+IMPROVISED_DMG_TYPES = {"blunt", "slash", "pierce"}  # 仅物理；炎霜雷影要真装备/剑技
+IMPROVISED_EQUIP_SLOTS = {"weapon", "armor"}
+IMPROVISED_MAX_REACH = 2                              # 长棍够到中排，没有即兴远程
+IMPROVISED_MAX_DEFENSE = 2                            # 破烂护甲 AC 加成上限
+IMPROVISED_MAX_HEAL = 5                               # 即兴消耗品回血上限
+
 
 @dataclass
 class Affordance:
@@ -169,6 +177,14 @@ class ImprovisedItem:
     size: str = "small"
     ttl: int = IMPROVISED_DEFAULT_TTL
     tags: List[str] = field(default_factory=list)
+    # 即兴装备/消耗（可选，经 _validate_improvised 有界校验后才带值）
+    equip_slot: str = ""                              # ""/weapon/armor
+    damage_expr: str = ""                             # 即兴武器伤害（1d2~1d4）
+    damage_type: str = "blunt"
+    scaling: dict = field(default_factory=dict)       # {attr: ≤1.0}
+    reach: int = 1
+    defense: int = 0                                  # 即兴护甲 AC 加成
+    use_effect: dict = field(default_factory=dict)    # 即兴消耗品效果（heal≤5 等）
 
     def to_inventory_item(self) -> "InventoryItem":
         kind = self.category if self.category in ITEM_KIND_DEFS else "item"
@@ -180,6 +196,14 @@ class ImprovisedItem:
             ttl=self.ttl,
             kind=kind,
             modifiers=["small"] if self.size in {"tiny", "small"} else [],
+            # 即兴装备字段随物迁移——这样捡来的破瓶子真能装备开打
+            equip_slot=self.equip_slot,
+            damage_expr=self.damage_expr,
+            damage_type=self.damage_type,
+            scaling=dict(self.scaling),
+            reach=self.reach,
+            defense=self.defense,
+            use_effect=dict(self.use_effect),
         )
 
 

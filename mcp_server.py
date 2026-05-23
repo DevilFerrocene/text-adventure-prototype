@@ -49,6 +49,8 @@ from core.types import (
     IMPROVISED_BUFF_TARGETS, IMPROVISED_BUFF_MAX_PER_TURN,
     IMPROVISED_BUFF_MAX_ACTIVE, IMPROVISED_BUFF_MAX_VALUE, IMPROVISED_BUFF_MAX_DURATION,
     IMPROVISED_CATEGORIES, IMPROVISED_SIZES, IMPROVISED_MAX_TTL,
+    IMPROVISED_WEAPON_DICE, IMPROVISED_DMG_TYPES, IMPROVISED_EQUIP_SLOTS,
+    IMPROVISED_MAX_REACH, IMPROVISED_MAX_DEFENSE, IMPROVISED_MAX_HEAL,
     MAX_IMPROVISED_IN_INVENTORY, MAX_IMPROVISED_PER_TURN, IMPROVISED_DEFAULT_TTL,
     ITEM_KIND_DEFS, ITEM_NAMED_TAG_DEFS, ITEM_MODIFIER_DEFS,
     MODIFIER_OPS, MODIFIER_TARGETS, MODIFIER_VISIBILITY, MODIFIER_OP_PRIORITY,
@@ -233,6 +235,23 @@ def _object_semantics(obj) -> dict:
     }
 
 
+def _item_capabilities(item) -> list:
+    """这件物品【机制上】到底能做什么——权威能力清单，治 GM "凭名字脑补可用度"。
+    一件东西能不能当武器/装备/嗑，只看它的数据字段，不看名字叫得多唬人。"""
+    caps = []
+    if getattr(item, "equip_slot", "") == "weapon" and getattr(item, "damage_expr", ""):
+        sc = ("，吃" + "/".join(f"{k}×{v}" for k, v in item.scaling.items())) if getattr(item, "scaling", None) else ""
+        caps.append(f"可装备为武器（{item.damage_expr} {item.damage_type}，触及 {getattr(item, 'reach', 1)}{sc}）")
+    elif getattr(item, "equip_slot", "") == "armor":
+        caps.append(f"可装备为护甲（AC +{getattr(item, 'defense', 0)}）")
+    if getattr(item, "use_effect", None):
+        eff = "、".join(f"{k}+{v}" for k, v in item.use_effect.items())
+        caps.append(f"可使用消耗（{eff}）")
+    if not caps:
+        caps.append("纯叙事/无机制用途（不可装备、不可当武器、不可使用）")
+    return caps
+
+
 def _inventory_snapshot(state: GameState) -> list:
     items = []
     for item in state.inventory:
@@ -246,6 +265,8 @@ def _inventory_snapshot(state: GameState) -> list:
             "kind": item.kind,
             "named_tags": item.named_tags,
             "modifiers": item.modifiers,
+            # 权威能力清单：GM 据此判断可用度，别凭名字/desc 脑补
+            "capabilities": _item_capabilities(item),
             "base_methods": semantics["base_methods"],
             "prompt_hints": semantics["prompt_hints"],
             "prompt_priority": semantics["prompt_priority"],
@@ -643,11 +664,59 @@ def _validate_improvised(raw_items: list, state: GameState) -> Tuple[List[Improv
         except (TypeError, ValueError):
             ttl = IMPROVISED_DEFAULT_TTL
 
+        # ── 即兴装备/消耗字段：可选，有界（破局靠捡破烂当武器，但不许造神兵）──
+        equip_slot = raw.get("equip_slot", "") or ""
+        damage_expr = raw.get("damage_expr", "") or ""
+        damage_type = raw.get("damage_type", "blunt") or "blunt"
+        scaling_raw = raw.get("scaling", {})
+        reach = raw.get("reach", 1)
+        defense = raw.get("defense", 0)
+        use_effect_raw = raw.get("use_effect", {})
+
+        if equip_slot and equip_slot not in IMPROVISED_EQUIP_SLOTS:
+            equip_slot = ""    # 非法槽位 → 当普通物品，不报错硬拒
+        if equip_slot == "weapon":
+            # 破烂武器：伤害钳到白名单(默认 1d3)，类型限物理
+            if damage_expr not in IMPROVISED_WEAPON_DICE:
+                damage_expr = "1d3"
+            if damage_type not in IMPROVISED_DMG_TYPES:
+                damage_type = "blunt"
+        else:
+            damage_expr = ""   # 非武器不带伤害
+        # scaling：仅留已知属性、系数钳到 ≤1.0
+        scaling = {}
+        if isinstance(scaling_raw, dict):
+            for k, v in scaling_raw.items():
+                if k in ("str", "dex", "con", "int"):
+                    try:
+                        scaling[k] = max(0.0, min(1.0, float(v)))
+                    except (TypeError, ValueError):
+                        pass
+        try:
+            reach = max(1, min(IMPROVISED_MAX_REACH, int(reach)))
+        except (TypeError, ValueError):
+            reach = 1
+        try:
+            defense = max(0, min(IMPROVISED_MAX_DEFENSE, int(defense))) if equip_slot == "armor" else 0
+        except (TypeError, ValueError):
+            defense = 0
+        # use_effect：仅留 heal/restore_sp，数值钳到上限
+        use_effect = {}
+        if isinstance(use_effect_raw, dict):
+            for k in ("heal", "restore_sp"):
+                if k in use_effect_raw:
+                    try:
+                        use_effect[k] = max(0, min(IMPROVISED_MAX_HEAL, int(use_effect_raw[k])))
+                    except (TypeError, ValueError):
+                        pass
+
         seen_ids.add(item_id)
         accepted.append(ImprovisedItem(
             id=item_id, name=name, desc=desc,
             category=category, size=size, ttl=ttl,
             tags=[t for t in tags if isinstance(t, str)],
+            equip_slot=equip_slot, damage_expr=damage_expr, damage_type=damage_type,
+            scaling=scaling, reach=reach, defense=defense, use_effect=use_effect,
         ))
         if len(accepted) >= slots:
             break
@@ -3925,15 +3994,25 @@ def use_item(item_id: str) -> dict:
 
 @mcp.tool()
 def add_improvised(items: list) -> dict:
-    """即兴添加临时物品（经 7 关验证后入背包）。
-
-    每回合最多 2 个，背包上限 4 个即兴物品。trace 类不入背包。
+    """即兴添加临时物品（经验证后入背包）。每回合最多 2 个，背包上限 4 个，trace 不入包。
 
     Args:
-        items: 物品列表，每个对象格式：
+        items: 物品列表，每个对象：
                { "id": "imp_xxx", "name": "...", "desc": "...",
                  "category": "fragment|consumable|trinket|tool|clue",
                  "size": "tiny|small|medium", "ttl": 1-5, "tags": [] }
+
+    即兴【武器/装备/消耗】（破局核心：捡破烂当武器）——加这些字段，引擎有界校验后
+    真能装备开打/嗑（超规自动钳，不报错）：
+        武器：  "equip_slot":"weapon", "damage_expr":"1d2|1d3|1d4",
+                "damage_type":"blunt|slash|pierce", "reach":1|2, "scaling":{"str":≤1.0}
+        护甲：  "equip_slot":"armor", "defense":1-2
+        消耗品："use_effect":{"heal":≤5}   # 或 restore_sp
+    例：玩家砸碎酒瓶当武器 →
+        {"id":"imp_bottle","name":"碎酒瓶","category":"tool",
+         "equip_slot":"weapon","damage_expr":"1d3","damage_type":"slash"}
+    返回的 added[].capabilities 会写明每件物品【真能干什么】——别凭名字脑补可用度。
+    （注意：即兴武器只能弱、只限物理；炎霜雷影/远程/神兵要靠真装备或剑技。）
     """
     if err := _require_started():
         return err
@@ -3945,7 +4024,10 @@ def add_improvised(items: list) -> dict:
     for imp in accepted:
         inv_item = imp.to_inventory_item()
         state.add_item(inv_item)
-        added.append({"id": imp.id, "name": imp.name, "category": imp.category, "ttl": imp.ttl})
+        added.append({"id": imp.id, "name": imp.name, "category": imp.category,
+                      "ttl": imp.ttl,
+                      # 当场告诉 GM 这件即兴物品【真能干什么】，免得脑补可用度
+                      "capabilities": _item_capabilities(inv_item)})
 
     return {
         "ok": True,

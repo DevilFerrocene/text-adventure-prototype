@@ -125,5 +125,61 @@ class PathForestTest(unittest.TestCase):
         self.assertEqual(mcp_server.SESSION.state.vitals.gold, g0 + 3)
 
 
+class ImprovisedWeaponTest(unittest.TestCase):
+    """破局核心：GM 能即兴出真能装备开打的破烂武器，且超规被钳。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def test_improvised_weapon_is_equippable(self):
+        r = mcp_server.add_improvised([{
+            "id": "imp_bottle", "name": "碎酒瓶", "category": "tool",
+            "equip_slot": "weapon", "damage_expr": "1d3", "damage_type": "slash"}])
+        self.assertTrue(r["ok"])
+        it = mcp_server.SESSION.state.get_item("imp_bottle")
+        self.assertEqual((it.equip_slot, it.damage_expr, it.damage_type), ("weapon", "1d3", "slash"))
+        self.assertTrue(mcp_server.equip("imp_bottle")["ok"])
+
+    def test_overspec_weapon_clamped(self):
+        # 神兵级/元素伤害被钳：默认 1d3、类型回退物理
+        mcp_server.add_improvised([{
+            "id": "imp_godsword", "name": "神剑", "category": "tool",
+            "equip_slot": "weapon", "damage_expr": "2d12", "damage_type": "fire"}])
+        it = mcp_server.SESSION.state.get_item("imp_godsword")
+        self.assertIn(it.damage_expr, mcp_server.IMPROVISED_WEAPON_DICE)
+        self.assertIn(it.damage_type, mcp_server.IMPROVISED_DMG_TYPES)
+
+    def test_capabilities_surfaced(self):
+        r = mcp_server.add_improvised([
+            {"id": "imp_club", "name": "桌腿", "category": "tool",
+             "equip_slot": "weapon", "damage_expr": "1d4"},
+            {"id": "imp_note", "name": "字条", "category": "clue", "desc": "潦草几字"},
+        ])
+        caps = {a["id"]: a["capabilities"] for a in r["added"]}
+        self.assertTrue(any("武器" in c for c in caps["imp_club"]))
+        self.assertTrue(any("纯叙事" in c for c in caps["imp_note"]))
+
+    def test_improvised_armor_defense_clamped(self):
+        mcp_server.add_improvised([{
+            "id": "imp_lid", "name": "破锅盖", "category": "tool",
+            "equip_slot": "armor", "defense": 99}])
+        it = mcp_server.SESSION.state.get_item("imp_lid")
+        self.assertLessEqual(it.defense, mcp_server.IMPROVISED_MAX_DEFENSE)
+
+    def test_improvised_consumable_heal_clamped(self):
+        mcp_server.add_improvised([{
+            "id": "imp_berry", "name": "野果", "category": "consumable",
+            "use_effect": {"heal": 999}}])
+        it = mcp_server.SESSION.state.get_item("imp_berry")
+        self.assertLessEqual(it.use_effect.get("heal", 0), mcp_server.IMPROVISED_MAX_HEAL)
+
+    def test_plain_item_has_no_weapon_capability(self):
+        # 光给名字的物品 = 纯叙事，不能当武器
+        mcp_server.add_improvised([{"id": "imp_rag", "name": "破布", "category": "fragment"}])
+        it = mcp_server.SESSION.state.get_item("imp_rag")
+        self.assertEqual(it.equip_slot, "")
+        self.assertEqual(it.damage_expr, "")
+
+
 if __name__ == "__main__":
     unittest.main()

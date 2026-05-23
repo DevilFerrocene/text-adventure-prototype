@@ -590,27 +590,14 @@ def register(world: GameWorld):
         name="酒馆老板·跛脚塞恩",
         description=(
             "拖着一条瘸腿在吧台后擦杯子的老男人，据说年轻时也是攻略者，被某层的怪咬断了跟腱。"
-            "他什么都见过，什么都不多嘴——除非你让他觉得你值得搭句话。"
+            "他什么都见过，什么都不多嘴，眼皮都懒得为你这种新人抬一下。"
         ),
         kind="npc",
         named_tags=["bartender"],
-        traits=["veteran", "informant"],
+        traits=["veteran", "taciturn"],
         takable=False,
-        affordances={
-            "ask_advice": Affordance(
-                verb="ask_advice",
-                desc="问跛脚塞恩，一个穷光蛋新人能从哪儿弄把武器",
-                effect={
-                    "flags": {"got_tavern_tip": True},
-                    "clues": [
-                        "塞恩斜眼打量你空荡荡的腰带，嗤了一声：「拳头打杀人兔？回去等死吧。」"
-                        "他压低声音：「实在没辙——城外那棵枯树，掰根硬枝也比空手强。"
-                        "再不济，往西边树林里赌一把，老守林员的破屋里听说还留着把手斧。"
-                        "当然，你要是嫌慢，今晚这场架，挑边站，挨顿打也能换几个子儿。」"
-                    ],
-                },
-            ),
-        },
+        # 不挂任何"指路"affordance——破局得靠玩家自己摸，老板不剧透。
+        # GM 若要让他开口，也只许给氛围/反讽，绝不报答案（见 SKILL 冷开局铁律）。
     ))
     world.add_object(GameObject(
         id="field_notes",
