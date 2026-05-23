@@ -102,13 +102,21 @@ def _combat_log_lines(events: list, names: dict) -> list:
             lines.append(d["line"])             # 明骰加值链（含 → success/failure）
         elif k == "hit":
             dr, res, dmg = d.get("damage_raw"), d.get("resist", 1.0), d.get("damage")
-            if dr is not None and res not in (None, 1.0):
-                proc = f"{dr}×{res:g}={dmg}"     # 原始骰 × 抗性 = 最终
-            elif dr is not None:
-                proc = f"{dr}"
+            chain = []
+            if dr is not None:
+                chain.append(str(dr))
+                if res not in (None, 1.0):
+                    chain.append(f"×{res:g}")    # 抗性
+                if d.get("crit"):
+                    chain.append("×2")           # 大成功暴击翻倍
+            if len(chain) > 1:
+                proc = "".join(chain) + f"={dmg}"   # 有变换才显 =最终
+            elif chain:
+                proc = chain[0]
             else:
                 proc = f"{dmg}"
-            lines.append(f"  → {proc} 伤害（{target} {d.get('target_hp', '')}）")
+            crit = "💥暴击 " if d.get("crit") else ""
+            lines.append(f"  → {crit}{proc} 伤害（{target} {d.get('target_hp', '')}）")
         elif k == "kill":
             lines.append(f"  💀 {target} 倒下")
         elif k == "buff_applied":

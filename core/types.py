@@ -798,6 +798,9 @@ class Encounter:
     # §12：本场战斗附带的危机合约（start_combat 从 state.pending_contract 转入），
     # 胜利时 end_combat 按 reward_mult 缩放经验/掉落。None=无契约。
     contract: Optional[dict] = None
+    # §14-R3 借机攻击：{combatant_id: 上次借机的 round}。每个单位每回合最多借机一次，
+    # 比对当前 round 自动按回合复位（战斗是 transient，不入存档）。
+    aoo_used: dict = field(default_factory=dict)
 
 
 # ── 路线九 §9：实体能力契约 ────────────────────────────────────────

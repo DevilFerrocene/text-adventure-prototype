@@ -321,5 +321,112 @@ class TacticalSetupTest(unittest.TestCase):
         self.assertNotIn("rank", snap["combatants"][0])
 
 
+class CritDoubleTest(unittest.TestCase):
+    """大成功(自然20)命中 → 攻击伤害翻倍。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="t")
+
+    def _hit_damage(self, d20):
+        mcp_server.start_combat(canon=["frenzy_boar"])
+        boar = mcp_server.SESSION.encounter.combatants["enemy_frenzy_boar"]
+        boar.hp = boar.max_hp = 100
+        # 第一掷=命中骰，第二掷=伤害骰(固定3)；多垫几个防额外调用
+        with patch("mcp_server.random.randint", side_effect=[d20, 3, 3, 3]):
+            r = mcp_server.declare_intent(actor="player", intent="attack",
+                                          target="enemy_frenzy_boar")
+        hit = next(e for e in r["events"] if e["kind"] == "hit")
+        mcp_server.end_combat(reason="t")
+        return hit["detail"]
+
+    def test_critical_hit_doubles_damage(self):
+        crit = self._hit_damage(20)      # 自然20=大成功
+        normal = self._hit_damage(15)    # 普通命中
+        self.assertTrue(crit["crit"])
+        self.assertFalse(normal["crit"])
+        self.assertEqual(crit["damage"], normal["damage"] * 2)   # 同伤害骰，暴击×2
+
+
+class AdvantageRollTest(unittest.TestCase):
+    """偷袭走优势：roll_check / declare_intent 一次性 advantage = 双骰取高。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="t")
+
+    def test_advantage_takes_higher(self):
+        with patch("mcp_server.random.randint", side_effect=[5, 18]):
+            r = mcp_server.roll_check(reason="偷袭", advantage="advantage")
+        self.assertEqual(r["raw"], 18)
+
+    def test_disadvantage_takes_lower(self):
+        with patch("mcp_server.random.randint", side_effect=[5, 18]):
+            r = mcp_server.roll_check(reason="被压制", advantage="disadvantage")
+        self.assertEqual(r["raw"], 5)
+
+    def test_declare_intent_attack_advantage(self):
+        mcp_server.start_combat(canon=["frenzy_boar"])
+        boar = mcp_server.SESSION.encounter.combatants["enemy_frenzy_boar"]
+        boar.hp = boar.max_hp = 100
+        with patch("mcp_server.random.randint", side_effect=[3, 19, 3, 3]):  # 双骰取高 19
+            r = mcp_server.declare_intent(actor="player", intent="attack",
+                                          target="enemy_frenzy_boar", advantage="advantage")
+        atk = next(e for e in r["events"] if e["kind"] in ("attack", "hit"))
+        self.assertEqual(atk["detail"]["roll"], 19)
+
+
+class OpportunityAttackTest(unittest.TestCase):
+    """§14-R3：战术下脱离敌人触及范围 → 借机攻击；每敌每回合一次；非战术不触发。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="t")
+
+    def _start_tactical_melee(self):
+        mcp_server.start_combat(
+            tactical=True, rank_depth=2,
+            improvised=[{"name": "持刀兵", "archetype": "brute_low",
+                         "count": 1, "rank": 0, "reach": 1}])
+        enc = mcp_server.SESSION.encounter
+        enc.combatants["player"].rank = 0          # 同在前排，敌触及内
+        enc.combatants["player"].hp = 100           # 撑住，别被借机打死偏离测试
+        return enc
+
+    def test_retreat_provokes_opportunity_attack(self):
+        self._start_tactical_melee()
+        with patch("mcp_server.random.randint", return_value=18):
+            r = mcp_server.declare_intent(actor="player", intent="move", target="retreat")
+        self.assertIn("move", [e["kind"] for e in r["events"]])
+        self.assertTrue(any(e["detail"].get("opportunity") for e in r["events"]))
+
+    def test_aoo_once_per_round(self):
+        enc = self._start_tactical_melee()
+        p = enc.combatants["player"]
+        with patch("mcp_server.random.randint", return_value=18):
+            ev1 = []
+            mcp_server._trigger_opportunity_attacks(enc, "player", p, 0, 1, ev1)
+            self.assertTrue(any(e.detail.get("opportunity") for e in ev1))
+            p.rank = 0                              # 假想同回合再次脱离
+            ev2 = []
+            mcp_server._trigger_opportunity_attacks(enc, "player", p, 0, 1, ev2)
+            self.assertFalse(any(e.detail.get("opportunity") for e in ev2))  # 本回合已借机
+
+    def test_no_aoo_in_non_tactical(self):
+        mcp_server.start_combat(
+            improvised=[{"name": "兵", "archetype": "brute_low", "count": 1}])  # 非战术
+        r = mcp_server.declare_intent(actor="player", intent="move", target="retreat")
+        self.assertFalse(any(e["detail"].get("opportunity") for e in r["events"]))
+
+
 if __name__ == "__main__":
     unittest.main()

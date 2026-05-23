@@ -1107,7 +1107,8 @@ def _apply_hp_delta(bearer, m: Modifier):
 
 def _resolve_damage(bearer, raw_dmg: int, dmg_type: str,
                     match_context: dict | None = None,
-                    scaling: dict | None = None) -> dict:
+                    scaling: dict | None = None,
+                    damage_mult: float = 1.0) -> dict:
     """对一个 Damageable bearer 结算一次伤害。
 
     流程：raw → damage modifier(add/mul) → 抗性(damage_types_resist) → 扣 hp。
@@ -1142,8 +1143,9 @@ def _resolve_damage(bearer, raw_dmg: int, dmg_type: str,
     dmg_total = max(1, dmg_total)
 
     # ── 抗性：resist[type] 缺省 1.0（无抗性）；0.5=半伤，2.0=易伤 ──
+    # damage_mult：大成功暴击 ×2 等整体倍率，乘在抗性之后（"这一击多重"）。
     resist = bearer.damage_types_resist.get(dmg_type, 1.0)
-    final_dmg = max(1, int(dmg_total * resist))
+    final_dmg = max(1, int(dmg_total * resist * damage_mult))
 
     hp_before = bearer.hp
     bearer.hp = max(0, bearer.hp - final_dmg)
@@ -1154,6 +1156,7 @@ def _resolve_damage(bearer, raw_dmg: int, dmg_type: str,
         "damage": final_dmg,
         "damage_type": dmg_type,
         "resist": resist,
+        "damage_mult": damage_mult,
         "hp_before": hp_before,
         "hp_after": bearer.hp,
         "max_hp": bearer.max_hp,
@@ -1878,7 +1881,8 @@ def _audit_entry(m: Modifier) -> dict:
 
 
 @mcp.tool()
-def roll_check(reason: str, sides: int = 20, modifier: int = 0, dc: Optional[int] = None) -> dict:
+def roll_check(reason: str, sides: int = 20, modifier: int = 0, dc: Optional[int] = None,
+               advantage: str = "") -> dict:
     """骰子检定。自动合入 Modifier 池中的适配修正。
 
     Args:
@@ -1886,6 +1890,8 @@ def roll_check(reason: str, sides: int = 20, modifier: int = 0, dc: Optional[int
         sides:  骰子面数，默认 d20
         modifier: 修正值（属性加值等，已包含在合算中）
         dc:     难度等级。若提供则返回 outcome（critical_success/success/failure/critical_failure）
+        advantage: 一次性优劣势——"advantage"=双骰取高（偷袭/抢先/居高临下）、
+                   "disadvantage"=双骰取低（致盲/被压制）、""=正常。用完即弃，不留池。
     """
     if err := _require_started():
         return err
@@ -1902,6 +1908,12 @@ def roll_check(reason: str, sides: int = 20, modifier: int = 0, dc: Optional[int
     # ── §11 R2：属性→Modifier 投影（accuracy role → roll）──
     attr_mods = _emit_attribute_modifiers(SESSION.state, rulebook=SESSION.world.rulebook)
     extra_mods = on_check_mods + passive_mods + attr_mods
+    # 一次性优劣势：构造临时 advantage/disadvantage modifier 进本次掷骰（不入池）
+    if advantage in ("advantage", "disadvantage"):
+        extra_mods = extra_mods + [Modifier(
+            id="oneshot_roll_mode", source_kind="oneshot", source_id="roll_mode",
+            target="roll", selector={}, op=advantage, value="",
+            reason=("优势" if advantage == "advantage" else "劣势"), visible=True)]
 
     match_context = {"reason": reason}
     raw = random.randint(1, sides)
@@ -3334,9 +3346,74 @@ INTENT_ACTION_COST = {
 }
 
 
+def _combat_strike(actor_id: str, attacker, target_id: str, target, events: list, *,
+                   damage_expr: str, dmg_type: str, scaling: dict | None = None,
+                   advantage: str = "", reason: str | None = None,
+                   opportunity: bool = False) -> dict:
+    """一次攻击结算：掷骰 vs 目标 AC（可优劣势）→ 命中则 roll 伤害（大成功翻倍）
+    → 记 attack/hit/miss/kill 事件。玩家攻击分支与借机攻击共用，确保暴击/优势一致。
+    reach 门控由调用方负责（借机攻击不门控——它本就是脱离触及时触发）。"""
+    reason = reason or f"{attacker.name} 攻击 {target.name}"
+    atk_roll = roll_check(reason=reason, sides=20, dc=target.ac, advantage=advantage)
+    if not atk_roll["ok"]:
+        return atk_roll
+    atk_line = explain_last_roll().get("line_format", "")
+    outcome = atk_roll.get("outcome")
+    is_crit = outcome == "critical_success"
+    roll_detail = {"roll": atk_roll["raw"], "total": atk_roll.get("total"),
+                   "ac": target.ac, "outcome": outcome, "line": atk_line,
+                   "actor_name": attacker.name, "target_name": target.name,
+                   "opportunity": opportunity}
+    if outcome in ("success", "critical_success"):
+        dmg_raw = _roll_damage(damage_expr)
+        dmg = _resolve_damage(target, dmg_raw, dmg_type, {"reason": reason},
+                              scaling=scaling, damage_mult=2.0 if is_crit else 1.0)
+        final_dmg = dmg["damage"]
+        events.append(CombatEvent(kind="attack", actor=actor_id, target=target_id,
+                                  detail=dict(roll_detail), roll_audit=SESSION.last_roll_audit))
+        events.append(CombatEvent(
+            kind="hit", actor=actor_id, target=target_id,
+            detail={"damage": final_dmg, "damage_raw": dmg_raw,
+                    "resist": dmg.get("resist", 1.0), "damage_type": dmg_type,
+                    "target_hp": f"{target.hp}/{target.max_hp}",
+                    "target_name": target.name,
+                    "crit": is_crit, "opportunity": opportunity}))
+    else:
+        events.append(CombatEvent(kind="miss", actor=actor_id, target=target_id,
+                                  detail=dict(roll_detail), roll_audit=SESSION.last_roll_audit))
+    if target.hp <= 0 and not target.is_dead:
+        target.is_dead = True
+        events.append(CombatEvent(kind="kill", actor=actor_id, target=target_id,
+                                  detail={"target_hp": f"0/{target.max_hp}",
+                                          "target_name": target.name}))
+    return {"ok": True, "outcome": outcome, "crit": is_crit}
+
+
+def _trigger_opportunity_attacks(enc, mover_id: str, mover, old_rank: int, new_rank: int,
+                                 events: list) -> None:
+    """§14-R3：战术下，mover 的移动若把它移出某敌人的触及范围（移动前在 reach 内、
+    移动后超出）→ 该敌人借机攻击一次。每个敌人每回合最多一次，不消耗其动作槽。
+    仅 action_economy（战术模式）生效，杜绝远程无限风筝。"""
+    if not enc.action_economy:
+        return
+    for fid, foe in list(enc.combatants.items()):
+        if foe.side == mover.side or foe.is_dead:
+            continue
+        reach = foe.reach
+        could_before = (foe.rank + old_rank) < reach
+        could_after = (foe.rank + new_rank) < reach
+        if could_before and not could_after:
+            if enc.aoo_used.get(fid) == enc.round:
+                continue                       # 本回合该敌已借机
+            enc.aoo_used[fid] = enc.round
+            _combat_strike(fid, foe, mover_id, mover, events,
+                           damage_expr=foe.damage_expr, dmg_type=foe.damage_type,
+                           reason=f"{foe.name} 借机攻击 {mover.name}", opportunity=True)
+
+
 @mcp.tool()
 def declare_intent(actor: str, intent: str, target: str = "",
-                   skill_id: str = "", weapon: str = "") -> dict:
+                   skill_id: str = "", weapon: str = "", advantage: str = "") -> dict:
     """声明当前行动者的战斗意图。核心战斗工具。
 
     Args:
@@ -3345,8 +3422,11 @@ def declare_intent(actor: str, intent: str, target: str = "",
         target:    目标 id（attack 必填）；move 时为 advance/retreat 或目标排号
         skill_id:  使用的技能 id（可选）
         weapon:    使用的武器 id（可选，从背包取）
+        advantage: attack 时这一击的优劣势——"advantage"=偷袭/抢先/居高临下双骰取高、
+                   "disadvantage"=被压制双骰取低、""=正常。一次性，用完即弃。
 
-    内部完整执行：命中判定 → 伤害 → buff → 死亡判定，返回 CombatEvent[] + 下一行动者。
+    内部完整执行：命中判定（大成功攻击伤害翻倍）→ 伤害 → buff → 死亡判定，
+    返回 CombatEvent[] + 下一行动者。move 脱离敌人触及范围会触发借机攻击（见 §14-R3）。
 
     §14-R2 行动经济（仅 Encounter.action_economy=True）：每回合 1 大动 + 1 小动。
     attack/defend/flee/use_item=大动，move=小动，end_turn=free（放弃剩余槽并过回合）。
@@ -3421,60 +3501,13 @@ def declare_intent(actor: str, intent: str, target: str = "",
                              f"（需 reach≥{gap + 1}，当前手段 {eff_reach}）。"
                              f"换远程武器、或 move 进位、或拉敌人进身。"}
 
-        # Attack roll vs target AC
-        atk_roll = roll_check(
-            reason=f"{combatant.name} 攻击 {target_com.name}",
-            sides=20, dc=target_com.ac,
-        )
-        if not atk_roll["ok"]:
-            return atk_roll
-        # 明骰：抓这次攻击掷骰的完整加值链（前端据此把战斗的"d 点"过程显出来）
-        atk_line = explain_last_roll().get("line_format", "")
-        roll_detail = {"roll": atk_roll["raw"], "total": atk_roll.get("total"),
-                       "ac": target_com.ac, "outcome": atk_roll.get("outcome"),
-                       "line": atk_line,
-                       # 名字直接随事件走——战斗结束后 encounter 快照没了也能正确显示
-                       "actor_name": combatant.name, "target_name": target_com.name}
-
-        if atk_roll.get("outcome") in ("success", "critical_success"):
-            # Hit — roll damage, then resolve through the unified damage entry
-            # (E3：探索/战斗共用 _resolve_damage，消除内联重复)
-            dmg_raw = _roll_damage(damage_expr)
-            dmg = _resolve_damage(
-                target_com, dmg_raw, dmg_type,
-                {"reason": f"{combatant.name} 攻击 {target_com.name}"},
-                scaling=atk_scaling,
-            )
-            final_dmg = dmg["damage"]
-
-            events.append(CombatEvent(
-                kind="attack", actor=actor, target=target,
-                detail=dict(roll_detail),
-                roll_audit=SESSION.last_roll_audit,
-            ))
-            events.append(CombatEvent(
-                kind="hit", actor=actor, target=target,
-                # 伤害结算过程：原始骰 → 抗性 → 最终伤害（前端显成 "3×1.5=4"）
-                detail={"damage": final_dmg, "damage_raw": dmg_raw,
-                        "resist": dmg.get("resist", 1.0), "damage_type": dmg_type,
-                        "target_hp": f"{target_com.hp}/{target_com.max_hp}",
-                        "target_name": target_com.name},
-            ))
-        else:
-            events.append(CombatEvent(
-                kind="miss", actor=actor, target=target,
-                detail=dict(roll_detail),
-                roll_audit=SESSION.last_roll_audit,
-            ))
-
-        # Check target death
-        if target_com.hp <= 0:
-            target_com.is_dead = True
-            events.append(CombatEvent(
-                kind="kill", actor=actor, target=target,
-                detail={"target_hp": f"0/{target_com.max_hp}",
-                        "target_name": target_com.name},
-            ))
+        # 攻击结算走共用 _combat_strike（掷骰 vs AC、大成功翻倍、明骰、命中/未命中/击杀事件）。
+        # advantage 一次性透传（偷袭/抢先=优势），用完即弃。
+        strike = _combat_strike(actor, combatant, target, target_com, events,
+                                damage_expr=damage_expr, dmg_type=dmg_type,
+                                scaling=atk_scaling, advantage=advantage)
+        if not strike.get("ok"):
+            return strike
 
     # ── defend ──
     elif intent == "defend":
@@ -3554,6 +3587,11 @@ def declare_intent(actor: str, intent: str, target: str = "",
             kind="move", actor=actor, target="",
             detail={"from_rank": old_rank, "to_rank": new_rank},
         ))
+        # §14-R3：脱离某敌的触及范围 → 该敌借机攻击（战术、每敌每回合一次、不耗其动作）
+        _trigger_opportunity_attacks(enc, actor, combatant, old_rank, new_rank, events)
+        # 借机一击可能把玩家打死 → 走软重生收尾
+        if (death := _maybe_player_death(enc, events)) is not None:
+            return death
 
     # ── end_turn（§14-R2 free：主动结束回合、放弃剩余动作槽）──
     elif intent == "end_turn":
