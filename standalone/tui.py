@@ -184,7 +184,7 @@ class TextAdventureApp(App):
                 if kind == "tool":
                     if state["placeholder"] is not None:
                         self.call_from_thread(
-                            state["placeholder"].update, f"⋯ GM 正在查看（{payload}）")
+                            state["placeholder"].update, f"⋯ GM 正在查看（{payload['name']}）")
                 elif kind == "delta":
                     buf.append(payload)
                     if "\n" in payload or sum(len(x) for x in buf) >= FLUSH_CHARS:

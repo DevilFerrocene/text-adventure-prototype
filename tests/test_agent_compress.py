@@ -1,6 +1,8 @@
 """独立运行层上下文压缩：滑窗 + 旧工具结果截断 + reasoning 剥离，不破坏配对。"""
+import types
 import unittest
 
+import mcp_server
 from standalone.agent import GameAgent
 from standalone.config import LLMConfig
 
@@ -88,6 +90,39 @@ class CompressTest(unittest.TestCase):
         for m in self.a.messages:
             if m.get("role") == "tool":
                 self.assertIn(m["tool_call_id"], call_ids)
+
+
+def _chunk(content=None, tool_calls=None):
+    delta = types.SimpleNamespace(content=content, tool_calls=tool_calls,
+                                  reasoning_content=None, model_extra=None)
+    return types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+
+def _tc(index, cid, name, args):
+    return types.SimpleNamespace(
+        index=index, id=cid,
+        function=types.SimpleNamespace(name=name, arguments=args))
+
+
+class ToolTracePayloadTest(unittest.TestCase):
+    """run_turn_stream 的 tool 事件须带 {name, args}，前端才能留痕显示 GM 在做什么。"""
+
+    def test_tool_event_carries_name_and_args(self):
+        mcp_server.start_game("aincrad")
+        a = _agent()
+        # 第一轮：GM 调一个工具 get_scene{}；第二轮：输出最终叙事
+        rounds = [
+            [_chunk(tool_calls=[_tc(0, "call_1", "get_scene", "{}")])],
+            [_chunk(content="你环顾四周。")],
+        ]
+        a.client.chat.completions.create = lambda **kw: rounds.pop(0)
+        events = list(a.run_turn_stream("看看周围"))
+        tool_events = [p for k, p in events if k == "tool"]
+        self.assertEqual(len(tool_events), 1)
+        self.assertEqual(tool_events[0]["name"], "get_scene")
+        self.assertIn("args", tool_events[0])           # 带参数，供前端展开
+        # 仍正常产出最终叙事
+        self.assertTrue(any(k == "final" for k, _ in events))
 
 
 if __name__ == "__main__":

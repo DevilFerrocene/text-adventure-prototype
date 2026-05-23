@@ -134,6 +134,9 @@ body{
 .card.combat .cb.dead{opacity:.4} .card.combat .cb.dead .nm{text-decoration:line-through}
 .card.log{border-left:2px solid var(--cyan)}
 .card.log .log-body{font-size:12px;color:var(--fg-dim);line-height:1.75}
+/* GM 工具调用痕迹：弱、小、不抢叙事 */
+.msg.trace{font-family:var(--mono);font-size:11px;max-width:72ch;width:100%;margin:1px auto;opacity:.62}
+.msg.trace .tn{color:var(--fg-dim)} .msg.trace .ta{color:var(--fg-mute)}
 
 /* ── 输入栏 ── */
 #inputbar{
@@ -284,6 +287,20 @@ async function sendTurn(text){
   const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const mkCard=(type,html)=>{const c=document.createElement('div');c.className='msg card '+type;c.innerHTML=html;
     if(think.parentNode) stage.insertBefore(c,think); else stage.appendChild(c); scrollEnd(); return c;};
+  // GM 每调一个工具 → 留一条持久痕迹行（让玩家看见 GM 在做什么）
+  const addTrace=(name, argsJson)=>{
+    const parts=[];
+    try{ for(const v of Object.values(JSON.parse(argsJson||'{}'))){
+      if(v===''||v==null||v===false) continue;
+      if(Array.isArray(v)){ if(v.length) parts.push(v.join('/')); }
+      else if(typeof v==='object'){ parts.push(JSON.stringify(v)); }
+      else parts.push(String(v));
+    } }catch(e){}
+    const arg = parts.join(' · ');
+    const d=document.createElement('div'); d.className='msg trace';
+    d.innerHTML='<span class="tn">🔧 '+esc(name)+'</span>'+(arg?'<span class="ta"> · '+esc(arg)+'</span>':'');
+    if(think.parentNode) stage.insertBefore(d,think); else stage.appendChild(d); scrollEnd();
+  };
   const renderCard=(type,d)=>{
     if(type==='scene'){
       const objs=(d.objects||[]).join('、')||'—', exits=(d.exits||[]).join(' · ')||'—';
@@ -328,7 +345,8 @@ async function sendTurn(text){
           gm.innerHTML = mdToHtml(gm.dataset.raw); gm.classList.add('cursor');
           scrollEnd();
         }else if(ev==='tool'){
-          think.textContent='⋯ GM 正在查看（'+data.name+'）';
+          addTrace(data.name, data.args);          // 持久留痕
+          think.textContent='⋯ GM 正在推演';
         }else if(ev==='render'){
           renderCard(data.type, data.data);
         }else if(ev==='final'){

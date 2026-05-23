@@ -215,7 +215,7 @@ class GameAgent:
                         self.on_tool_call(s["name"], json.loads(s["args"] or "{}"))
                     except Exception:
                         pass
-                yield ("tool", s["name"])
+                yield ("tool", {"name": s["name"], "args": s["args"] or "{}"})
                 result = call_tool(self.dispatch, s["name"], s["args"] or "{}")
                 # 把工具结果也带出来，供富前端从中渲染 HUD/场景/骰子/战斗面板
                 yield ("tool_result", {"name": s["name"], "result": result})

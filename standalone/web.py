@@ -179,7 +179,8 @@ async def turn(request: Request) -> StreamingResponse:
                     if kind == "delta":
                         yield _sse("delta", {"text": payload})
                     elif kind == "tool":
-                        yield _sse("tool", {"name": payload})
+                        yield _sse("tool", {"name": payload["name"],
+                                            "args": payload.get("args", "")})
                     elif kind == "tool_result":
                         # 从工具结果渲染结构面板（场景/骰子/战斗）
                         for rtype, rdata in _render_events(payload.get("name"),
