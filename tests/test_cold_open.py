@@ -180,6 +180,15 @@ class ImprovisedWeaponTest(unittest.TestCase):
         self.assertEqual(it.equip_slot, "")
         self.assertEqual(it.damage_expr, "")
 
+    def test_improvised_item_survives_room_change(self):
+        # 即兴物品不再跨场景消失——掰的棍、捡的瓶子带得走
+        mcp_server.add_improvised([{
+            "id": "imp_bottle", "name": "碎酒瓶", "category": "tool",
+            "equip_slot": "weapon", "damage_expr": "1d3"}])
+        self.assertTrue(mcp_server.SESSION.state.has_item("imp_bottle"))
+        self.assertTrue(mcp_server.move("north")["ok"])   # 营地 → 草原
+        self.assertTrue(mcp_server.SESSION.state.has_item("imp_bottle"))
+
 
 if __name__ == "__main__":
     unittest.main()

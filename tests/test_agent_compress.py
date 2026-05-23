@@ -1,9 +1,7 @@
 """独立运行层上下文压缩：滑窗 + 旧工具结果截断 + reasoning 剥离，不破坏配对。"""
 import unittest
 
-from standalone.agent import (
-    GameAgent, KEEP_RECENT_TURNS, OLD_TOOL_RESULT_CAP, HISTORY_CHAR_BUDGET,
-)
+from standalone.agent import GameAgent
 from standalone.config import LLMConfig
 
 
@@ -48,11 +46,12 @@ class CompressTest(unittest.TestCase):
     def test_old_tool_results_truncated_last_round_full(self):
         self.a.messages = [self.sys] + _round(1) + _round(2) + _round(3)
         self.a._compress_history()
+        cap = self.a.config.old_tool_result_cap
         tool_msgs = [m for m in self.a.messages if m.get("role") == "tool"]
         # 最后一轮的工具结果完整；之前的被截断
-        self.assertGreater(len(tool_msgs[-1]["content"]), OLD_TOOL_RESULT_CAP)
+        self.assertGreater(len(tool_msgs[-1]["content"]), cap)
         for tm in tool_msgs[:-1]:
-            self.assertLessEqual(len(tm["content"]), OLD_TOOL_RESULT_CAP + 60)
+            self.assertLessEqual(len(tm["content"]), cap + 60)
 
     def test_over_budget_drops_oldest_rounds(self):
         # 30 个大回合 → 远超预算 → 砍到只剩最近 KEEP_RECENT_TURNS 轮
@@ -61,9 +60,20 @@ class CompressTest(unittest.TestCase):
             self.a.messages += _round(n)
         self.a._compress_history()
         users = [m for m in self.a.messages if m.get("role") == "user"]
-        self.assertEqual(len(users), KEEP_RECENT_TURNS)
+        self.assertEqual(len(users), self.a.config.keep_recent_turns)
         self.assertEqual(self.a.messages[0], self.sys)            # 系统提示词恒保留
         self.assertEqual(self.a.messages[1]["role"], "user")     # 砍口落在回合边界
+
+    def test_budget_zero_disables_compression(self):
+        # history_char_budget ≤ 0 → 整体关闭，历史原样不动
+        self.a.config.history_char_budget = 0
+        self.a.messages = [self.sys]
+        for n in range(30):
+            self.a.messages += _round(n)
+        before = len(self.a.messages)
+        self.a._compress_history()
+        self.assertEqual(len(self.a.messages), before)
+        self.assertTrue(any("reasoning_content" in m for m in self.a.messages))
 
     def test_pairing_integrity_after_compression(self):
         self.a.messages = [self.sys]

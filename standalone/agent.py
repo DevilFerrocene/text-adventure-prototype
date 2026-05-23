@@ -22,9 +22,8 @@ MAX_TOOL_ITERS = 16   # 单回合内最多几轮工具调用，防失控
 # 对话历史无界增长会撑爆窗口、每回合烧更多 token。但本游戏【引擎才是长程记忆】
 # （HUD/任务/线索/对话日志/房间快照/背包全在引擎里，每回合用 get_state/recall 重查），
 # 所以历史只需保留最近若干回合的叙事流，旧回合可整轮丢弃——事实都在引擎里。
-HISTORY_CHAR_BUDGET = 40000   # 历史体量超此（粗估字符≈token）就压缩
-KEEP_RECENT_TURNS = 6         # 至少完整保留最近 N 个玩家回合（保叙事连贯）
-OLD_TOOL_RESULT_CAP = 600     # 旧回合的工具结果截断到此长度（最新一轮保留完整）
+# 三个阈值由 LLMConfig 提供（可经 .env 配：HISTORY_CHAR_BUDGET / KEEP_RECENT_TURNS /
+# OLD_TOOL_RESULT_CAP）。HISTORY_CHAR_BUDGET ≤ 0 表示关闭压缩。
 
 
 @dataclass
@@ -56,10 +55,14 @@ class GameAgent:
         """回合开始时压缩历史。三招，全都不破坏 tool_call↔tool 配对：
         ① 剥离已完成回合的 reasoning_content（思考链是死重，DeepSeek 也不该回传旧的）；
         ② 截断旧回合的工具结果（最新一轮保留完整，旧的可重新 get_state/recall）；
-        ③ 仍超预算 → 按【玩家回合】边界整轮丢最老的，保 system + 最近 KEEP_RECENT_TURNS 轮。
+        ③ 仍超预算 → 按【玩家回合】边界整轮丢最老的，保 system + 最近 keep_recent_turns 轮。
+        阈值取自 self.config（可经 .env 配）；history_char_budget ≤ 0 时整体关闭压缩。
         """
+        budget = self.config.history_char_budget
+        keep_turns = self.config.keep_recent_turns
+        tool_cap = self.config.old_tool_result_cap
         msgs = self.messages
-        if len(msgs) <= 3:
+        if budget <= 0 or len(msgs) <= 3:
             return
         # ① 剥离历史里的 reasoning_content（仅当前回合循环内需要，跨回合是死重）
         for m in msgs[1:]:
@@ -71,15 +74,15 @@ class GameAgent:
             m = msgs[i]
             if m.get("role") == "tool":
                 c = m.get("content") or ""
-                if len(c) > OLD_TOOL_RESULT_CAP:
-                    m["content"] = (c[:OLD_TOOL_RESULT_CAP]
+                if len(c) > tool_cap:
+                    m["content"] = (c[:tool_cap]
                                     + " …[旧工具结果已截断；最新状态以 get_state/recall 为准]")
         # ③ 仍超预算 → 整轮丢最老的（系统消息恒保留）
-        if self._history_chars() > HISTORY_CHAR_BUDGET:
+        if self._history_chars() > budget:
             user_idx = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
-            if len(user_idx) > KEEP_RECENT_TURNS:
-                cut = user_idx[-KEEP_RECENT_TURNS]   # 倒数第 K 个玩家回合的起点
-                del msgs[1:cut]                      # 砍掉 system 之后、到该点之前的整段旧历史
+            if len(user_idx) > keep_turns:
+                cut = user_idx[-keep_turns]   # 倒数第 K 个玩家回合的起点
+                del msgs[1:cut]               # 砍掉 system 之后、到该点之前的整段旧历史
 
     def _complete(self):
         return self.client.chat.completions.create(

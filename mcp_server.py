@@ -3661,11 +3661,8 @@ def move(direction: str) -> dict:
     # ── Phase 2：处理 scene_leave buff ticks ──
     _apply_direct_modifiers(state, _emit_buff_modifiers(state, "scene_leave"), state)
 
-    # Clear improvised items on room change
-    imp_cleared = [i.id for i in state.inventory if i.id.startswith("imp_")]
-    for iid in imp_cleared:
-        state.remove_item(iid)
-
+    # 即兴物品【不再】跨场景清除——玩家捡/造的东西（破瓶子、木棍）该留在身上。
+    # TTL 过期仍由 _advance_turn 处理（时间到了才消失，不是一换房就没）。
     old_room_id = state.position
     state.position = new_room_id
     expired = _advance_turn(state)
@@ -3684,7 +3681,6 @@ def move(direction: str) -> dict:
         "ok": True,
         "moved_to": new_room_id,
         "moved_from": old_room_id,
-        "improvised_cleared": imp_cleared,
         "expired_items": expired,
         "snapshot_written": old_room_id,
         "snapshot_applied": snapshot_applied,

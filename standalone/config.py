@@ -38,6 +38,10 @@ class LLMConfig:
     temperature: float = 0.8          # 叙事要点温度，但别太放飞
     max_tokens: int = 2048
     debug: bool = False
+    # ── 上下文压缩（独立运行 agent loop；引擎才是长程记忆，历史可激进裁剪）──
+    history_char_budget: int = 40000  # 历史体量超此（粗估字符≈token）就压缩；≤0 关闭压缩
+    keep_recent_turns: int = 6        # 至少完整保留最近 N 个玩家回合（保叙事连贯）
+    old_tool_result_cap: int = 600    # 旧回合工具结果截断到此长度（最新一轮保留完整）
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -49,6 +53,9 @@ class LLMConfig:
             temperature=float(os.environ.get("LLM_TEMPERATURE", "0.8")),
             max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "2048")),
             debug=os.environ.get("DEBUG", "").lower() in ("1", "true", "yes"),
+            history_char_budget=int(os.environ.get("HISTORY_CHAR_BUDGET", "40000")),
+            keep_recent_turns=int(os.environ.get("KEEP_RECENT_TURNS", "6")),
+            old_tool_result_cap=int(os.environ.get("OLD_TOOL_RESULT_CAP", "600")),
         )
 
     def validate(self) -> str | None:
