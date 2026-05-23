@@ -20,6 +20,17 @@ def self_check() -> int:
     print(f"✓ 工具桥：{len(specs)} 个工具就绪")
     sp = load_system_prompt()
     print(f"✓ system prompt：{len(sp)} 字")
+    # 世界引用完整性（悬空 id 在作者期就抓出来，别等玩到那里才崩）
+    import mcp_server
+    from runtime.game_world import GameWorld
+    for wname, wmod in mcp_server.WORLDS.items():
+        probs = GameWorld(content_module=wmod).validate()
+        if probs:
+            print(f"⚠️  世界 {wname} 有 {len(probs)} 处引用问题：")
+            for p in probs:
+                print(f"     - {p}")
+        else:
+            print(f"✓ 世界 {wname}：引用完整性干净")
     cfg = LLMConfig.from_env()
     err = cfg.validate()
     if err:
