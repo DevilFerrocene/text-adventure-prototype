@@ -32,8 +32,42 @@ _lock = threading.Lock()   # 单会话回合串行化
 def _get_agent():
     global _agent
     if _agent is None:
-        _agent = make_agent(LLMConfig.from_env())
+        # rich_ui：web 自己渲染 HUD/场景/骰子/战斗面板，GM 走散文模式（不粘状态块）
+        _agent = make_agent(LLMConfig.from_env(), rich_ui=True)
     return _agent
+
+
+def _render_events(name: str, result) -> list:
+    """从工具结果抽出要 UI 渲染的结构面板。返回 [(type, data), ...]。
+    web 直接渲染这些（GM 散文模式不再粘贴），消除重复 + 保证精确。"""
+    out = []
+    if not isinstance(result, dict):
+        return out
+    # 场景：get_scene / move / start_game 的返回带 scene（隐藏物已被快照排除）
+    scene = result.get("scene")
+    if isinstance(scene, dict):
+        objs = [o.get("name") for o in scene.get("objects", []) if o.get("name")]
+        exits = [d for d, info in (scene.get("exits") or {}).items()
+                 if not (isinstance(info, dict) and info.get("locked"))]
+        out.append(("scene", {"objects": objs, "exits": exits}))
+    # 明骰：explain_last_roll 的 line_format
+    if result.get("line_format"):
+        out.append(("dice", {"line": result["line_format"],
+                             "outcome": result.get("outcome", "")}))
+    # 战斗：任何带 active encounter 的结果（开战/declare_intent/deal_damage…）
+    enc = result.get("encounter")
+    if isinstance(enc, dict) and enc.get("active"):
+        out.append(("combat", {
+            "round": enc.get("round"),
+            "active": enc.get("active_combatant"),
+            "combatants": [
+                {"id": c.get("id"), "name": c.get("name"),
+                 "hp": c.get("hp"), "max_hp": c.get("max_hp"),
+                 "side": c.get("side"), "is_dead": c.get("is_dead")}
+                for c in enc.get("combatants", [])
+            ],
+        }))
+    return out
 
 
 def _sse(event: str, data: dict) -> str:
@@ -103,6 +137,11 @@ async def turn(request: Request) -> StreamingResponse:
                         yield _sse("delta", {"text": payload})
                     elif kind == "tool":
                         yield _sse("tool", {"name": payload})
+                    elif kind == "tool_result":
+                        # 从工具结果渲染结构面板（场景/骰子/战斗）
+                        for rtype, rdata in _render_events(payload.get("name"),
+                                                           payload.get("result")):
+                            yield _sse("render", {"type": rtype, "data": rdata})
                     elif kind == "final":
                         yield _sse("final", {"text": payload})
             except Exception as exc:

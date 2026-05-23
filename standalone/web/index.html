@@ -111,6 +111,28 @@ body{
 .cursor::after{content:'▌';color:var(--amber);animation:blink 1s step-end infinite}
 @keyframes blink{50%{opacity:0}}
 
+/* ── 引擎渲染面板（场景/明骰/战斗）：替代 GM 手抄状态块 ── */
+.msg.card{max-width:72ch;width:100%;margin:0 auto 14px auto;background:var(--bg-soft);
+  border:1px solid var(--line-soft);border-radius:8px;padding:9px 14px;font-family:var(--mono)}
+.card .card-h{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute);margin-bottom:2px}
+.card .card-b{font-size:12.5px;color:var(--fg-dim);margin-bottom:7px}
+.card .card-b:last-child{margin-bottom:0}
+.card.dice{border-left:2px solid var(--line)}
+.card.dice .dice-line{font-size:13px;color:var(--fg)}
+.card.dice.out-success,.card.dice.out-critical_success{border-left-color:var(--green)}
+.card.dice.out-failure,.card.dice.out-critical_failure{border-left-color:var(--red)}
+.card.combat{border-left:2px solid var(--amber)}
+.card.combat .ttl{font-size:10px;letter-spacing:.16em;color:var(--fg-mute);margin-bottom:7px}
+.card.combat .cb{display:flex;align-items:center;gap:9px;margin:4px 0;font-size:12px}
+.card.combat .cb .nm{flex:0 0 8em;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card.combat .cb .bar{flex:1;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.card.combat .cb .bar i{display:block;height:100%;background:var(--green);transition:width .3s var(--ease-in)}
+.card.combat .cb.enemy .bar i{background:var(--red)}
+.card.combat .cb .hp{flex:0 0 auto;color:var(--fg-mute);font-size:11px}
+.card.combat .cb.active .nm{color:var(--amber)}
+.card.combat .cb.active .nm::before{content:'▶ '}
+.card.combat .cb.dead{opacity:.4} .card.combat .cb.dead .nm{text-decoration:line-through}
+
 /* ── 输入栏 ── */
 #inputbar{
   flex:0 0 auto; display:flex; align-items:center; gap:10px;
@@ -255,6 +277,32 @@ async function sendTurn(text){
   const think = document.createElement('div'); think.className='thinking'; think.textContent='⋯ GM 正在推演';
   stage.appendChild(think); scrollEnd();
   let gm=null;
+  // 引擎渲染面板（本回合内：场景/战斗各保一张就地更新，骰子逐条累积）
+  let curScene=null, curCombat=null;
+  const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const mkCard=(type,html)=>{const c=document.createElement('div');c.className='msg card '+type;c.innerHTML=html;
+    if(think.parentNode) stage.insertBefore(c,think); else stage.appendChild(c); scrollEnd(); return c;};
+  const renderCard=(type,d)=>{
+    if(type==='scene'){
+      const objs=(d.objects||[]).join('、')||'—', exits=(d.exits||[]).join(' · ')||'—';
+      const html=`<div class="card-h">🔍 可查看</div><div class="card-b">${esc(objs)}</div>`+
+                 `<div class="card-h">🚪 出口</div><div class="card-b">${esc(exits)}</div>`;
+      if(curScene) curScene.innerHTML=html; else curScene=mkCard('scene',html);
+    }else if(type==='dice'){
+      const c=mkCard('dice','<div class="card-b dice-line">'+esc(d.line)+'</div>');
+      if(d.outcome) c.classList.add('out-'+d.outcome);
+    }else if(type==='combat'){
+      const rows=(d.combatants||[]).map(cb=>{
+        const r=cb.max_hp?Math.max(0,Math.min(1,cb.hp/cb.max_hp)):0;
+        const cls='cb '+(cb.side==='enemy'?'enemy':'ally')+(cb.is_dead?' dead':'')+(cb.id===d.active?' active':'');
+        return `<div class="${cls}"><span class="nm">${esc(cb.name)}</span>`+
+               `<span class="bar"><i style="width:${Math.round(r*100)}%"></i></span>`+
+               `<span class="hp">${cb.hp}/${cb.max_hp}</span></div>`;
+      }).join('');
+      const html=`<div class="ttl">⚔️ 第 ${d.round||1} 回合</div>`+rows;
+      if(curCombat) curCombat.innerHTML=html; else curCombat=mkCard('combat',html);
+    }
+  };
   try{
     const resp = await fetch('/turn',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({input:text, mode})});
@@ -276,6 +324,8 @@ async function sendTurn(text){
           scrollEnd();
         }else if(ev==='tool'){
           think.textContent='⋯ GM 正在查看（'+data.name+'）';
+        }else if(ev==='render'){
+          renderCard(data.type, data.data);
         }else if(ev==='final'){
           if(gm){ gm.classList.remove('cursor'); gm.innerHTML=mdToHtml(gm.dataset.raw||data.text); }
         }else if(ev==='hud'){

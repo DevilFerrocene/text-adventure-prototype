@@ -35,11 +35,12 @@ class GameAgent:
     dispatch: dict = field(init=False)
     messages: list = field(default_factory=list)
     on_tool_call: Callable[[str, dict], None] | None = None  # 调试/UI 回调
+    rich_ui: bool = False   # 富前端（web）：UI 自渲染面板，GM 走散文模式
 
     def __post_init__(self):
         self.client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
         self.tool_specs, self.dispatch = build_tools()
-        self.messages = [{"role": "system", "content": load_system_prompt()}]
+        self.messages = [{"role": "system", "content": load_system_prompt(self.rich_ui)}]
 
     def _history_chars(self) -> int:
         """粗估历史体量（字符数；中文≈token 同量级，够用来当压缩阈值）。"""
@@ -216,6 +217,8 @@ class GameAgent:
                         pass
                 yield ("tool", s["name"])
                 result = call_tool(self.dispatch, s["name"], s["args"] or "{}")
+                # 把工具结果也带出来，供富前端从中渲染 HUD/场景/骰子/战斗面板
+                yield ("tool_result", {"name": s["name"], "result": result})
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": s["id"],
@@ -225,5 +228,5 @@ class GameAgent:
         yield ("final", "（GM 在本回合调用工具过多，已中断。请再试一次。）")
 
 
-def make_agent(config: LLMConfig | None = None) -> GameAgent:
-    return GameAgent(config or LLMConfig.from_env())
+def make_agent(config: LLMConfig | None = None, rich_ui: bool = False) -> GameAgent:
+    return GameAgent(config or LLMConfig.from_env(), rich_ui=rich_ui)
