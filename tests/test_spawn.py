@@ -172,6 +172,54 @@ class BossRoomStaysFixedTest(unittest.TestCase):
         self.assertNotIn("enemy_profiles", sc)
 
 
+class NoConjureRealEnemiesTest(unittest.TestCase):
+    """刷怪场防"搓真怪"：野外真怪由刷怪决定，GM 不许点名拉/山寨真怪；新颖伏击怪放行。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+        mcp_server.SESSION.state.position = "plains"        # 刷怪场
+        mcp_server.SESSION.state.active_spawns = ["killer_rabbit"]   # 此刻只刷到兔
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="test cleanup")
+
+    def test_block_canon_not_actually_spawned(self):
+        # 点名拉没刷出来的真怪（疾风狼）→ 拒
+        r = mcp_server.start_combat(canon=["gale_wolf"])
+        self.assertFalse(r["ok"])
+        self.assertFalse(mcp_server.SESSION.in_combat)
+
+    def test_block_improvised_knockoff_of_canon(self):
+        # improvise 一只和真怪重名的山寨杀人兔 → 拒
+        r = mcp_server.start_combat(improvised=[
+            {"name": "杀人兔", "archetype": "brute_low", "count": 1}])
+        self.assertFalse(r["ok"])
+
+    def test_allow_real_spawned_canon(self):
+        # 打在场刷到的真怪 → 放行
+        r = mcp_server.start_combat(canon=["killer_rabbit"])
+        self.assertTrue(r["ok"])
+
+    def test_request_combat_default_path_ok(self):
+        # 常规路径：不带 canon，自动打在场刷到的 → 放行
+        r = mcp_server.request_combat(reason="扑上去")
+        self.assertTrue(r["ok"])
+
+    def test_allow_novel_improvised_ambusher(self):
+        # 池子里没有的新怪（剧情伏击）→ 放行
+        r = mcp_server.start_combat(improvised=[
+            {"name": "流浪山贼", "archetype": "brute_low", "count": 1}])
+        self.assertTrue(r["ok"])
+
+    def test_boss_room_unrestricted(self):
+        # Boss/固定遭遇房（非刷怪场）不受限——剧本照常点名 canon
+        mcp_server.SESSION.state.position = "warden_gate"
+        mcp_server.SESSION.state.active_spawns = []
+        r = mcp_server.start_combat(canon=["warden_gorehoof"])
+        self.assertTrue(r["ok"])
+
+
 class SpawnPersistenceTest(unittest.TestCase):
     """active_spawns 进存档、读档还原。"""
 

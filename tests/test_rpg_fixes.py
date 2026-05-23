@@ -156,6 +156,7 @@ class CombatXpTest(unittest.TestCase):
         # canon 与即兴敌人都该带 archetype（经验结算靠它）
         mcp_server.start_game("aincrad")
         mcp_server.SESSION.state.position = "plains"
+        mcp_server.SESSION.state.active_spawns = ["frenzy_boar"]   # 打在场刷到的（过刷怪场防搓怪门）
         mcp_server.start_combat(canon=["frenzy_boar"])
         c = mcp_server.SESSION.encounter.combatants["enemy_frenzy_boar"]
         self.assertEqual(c.archetype, "brute_low")
@@ -168,6 +169,7 @@ class CombatXpTest(unittest.TestCase):
     def test_canon_kill_grants_char_xp(self):
         mcp_server.start_game("aincrad")
         mcp_server.SESSION.state.position = "plains"
+        mcp_server.SESSION.state.active_spawns = ["frenzy_boar"]   # 打在场刷到的（过刷怪场防搓怪门）
         mcp_server.start_combat(canon=["frenzy_boar"])
         mcp_server.deal_damage(target="enemy_frenzy_boar", amount=999)
         r = mcp_server.end_combat(reason="胜利")
@@ -188,6 +190,7 @@ class CombatXpTest(unittest.TestCase):
         # declare_intent 击杀最后一敌自动结束，char_xp 应在顶层（不必挖 end_combat_result）
         mcp_server.start_game("aincrad")
         mcp_server.SESSION.state.position = "plains"
+        mcp_server.SESSION.state.active_spawns = ["frenzy_boar"]   # 打在场刷到的（过刷怪场防搓怪门）
         mcp_server.start_combat(canon=["frenzy_boar"])
         mcp_server.SESSION.encounter.combatants["enemy_frenzy_boar"].hp = 2
         with patch("mcp_server.random.randint", return_value=18):
@@ -200,6 +203,7 @@ class CombatXpTest(unittest.TestCase):
         # 没杀敌就结束 → 0 经验是对的
         mcp_server.start_game("aincrad")
         mcp_server.SESSION.state.position = "plains"
+        mcp_server.SESSION.state.active_spawns = ["frenzy_boar"]   # 打在场刷到的（过刷怪场防搓怪门）
         mcp_server.start_combat(canon=["frenzy_boar"])
         r = mcp_server.end_combat(reason="逃跑")
         self.assertEqual(r["char_xp_gained"], 0)

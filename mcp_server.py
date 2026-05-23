@@ -2749,6 +2749,31 @@ def _enemy_profiles_for_scene(state: GameState) -> list:
     return profiles
 
 
+def _spawn_ground_conjure_error(room, state: GameState, canon: list, improvised: list) -> str | None:
+    """刷怪场防 GM 凭空"搓真怪"：野外的 canon 怪由刷怪随机决定，
+    不许点名拉【没刷出来】的真怪，也不许 improvise 一只和真怪【重名】的山寨货
+    （会数值漂移、绕过设计）。名字不撞任何 canon 怪的新颖 improvised 放行——
+    那是合法的剧情伏击/临场杂兵。仅在刷怪场房间生效；Boss/固定遭遇房不受限。
+    返回错误说明，无违规返回 None。"""
+    if not _is_spawn_ground(room):
+        return None
+    present = set(state.active_spawns)
+    world = SESSION.world
+    for eid in (canon or []):
+        if eid not in present:
+            tmpl = world.get_enemy(eid)
+            nm = tmpl.name if tmpl else eid
+            return (f"野外不许点名拉没刷出来的怪「{nm}」——这片的怪由刷怪随机决定。"
+                    "打在场的就 request_combat() 不带 canon；想再遇敌让玩家走动重刷。")
+    canon_names = {t.name for t in (world.enemies or {}).values()}
+    for it in (improvised or []):
+        nm = it.get("name") if isinstance(it, dict) else None
+        if nm and nm in canon_names:
+            return (f"别在野外造山寨的真怪「{nm}」——真怪由刷怪给，数值才算得清。"
+                    "打在场的用 request_combat() 不带参数；要演剧情伏击就造个【池子里没有】的新怪。")
+    return None
+
+
 # ── §12 危机合约：词条库 + 套用 ───────────────────────────────────
 # 设计：玩家【作者难度】，引擎吃得住极端强化，奖励按难度【确定性】缩放——
 # power 靠 build 挣，难度靠玩家自己开。词条只强化敌人（"玩家造敌人，造轴"），
@@ -2814,6 +2839,11 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None,
     canon = canon or []
     improvised = improvised or []
     world, state = SESSION.world, SESSION.state
+    # 刷怪场防"搓真怪"：野外真怪由刷怪决定，不许 GM 点名/山寨（Boss 房不受限）。
+    # request_combat 也funnel到这里，故一处守住两条路。
+    conjure_err = _spawn_ground_conjure_error(world.get_room(state.position), state, canon, improvised)
+    if conjure_err:
+        return {"ok": False, "error": conjure_err}
 
     combatants: dict[str, Combatant] = {}
 

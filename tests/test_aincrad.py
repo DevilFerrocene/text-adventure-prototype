@@ -125,6 +125,7 @@ class SkillsTest(unittest.TestCase):
         mcp_server.use_skill("vertical_arc")  # 挂"蓄力斩" damage +4 buff
         # 在战斗里验证增伤：起一场战斗对野猪
         mcp_server.SESSION.state.position = "plains"
+        mcp_server.SESSION.state.active_spawns = ["frenzy_boar"]   # 打在场刷到的（过刷怪场防搓怪门）
         mcp_server.start_combat(canon=["frenzy_boar"])
         boar = mcp_server.SESSION.encounter.combatants["enemy_frenzy_boar"]
         boar.hp = boar.max_hp = 100

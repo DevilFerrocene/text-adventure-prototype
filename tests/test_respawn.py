@@ -53,6 +53,7 @@ class CombatDeathRespawnTest(unittest.TestCase):
         st = mcp_server.SESSION.state
         st.vitals.gold = 10
         st.position = "plains"
+        st.active_spawns = ["killer_rabbit"]   # 打在场刷到的（过刷怪场防搓怪门）
         mcp_server.start_combat(canon=["killer_rabbit"])
         enc = mcp_server.SESSION.encounter
         # 兔子拉满血不会被秒；玩家危在旦夕
@@ -73,6 +74,7 @@ class CombatDeathRespawnTest(unittest.TestCase):
 
     def test_no_respawn_while_player_alive(self):
         mcp_server.SESSION.state.position = "plains"
+        mcp_server.SESSION.state.active_spawns = ["killer_rabbit"]   # 打在场刷到的（过刷怪场防搓怪门）
         mcp_server.start_combat(canon=["killer_rabbit"])
         rab = mcp_server.SESSION.encounter.combatants["enemy_killer_rabbit"]
         rab.hp = rab.max_hp = 50
