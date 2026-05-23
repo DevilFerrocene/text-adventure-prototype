@@ -3239,6 +3239,13 @@ def declare_intent(actor: str, intent: str, target: str = "",
         )
         if not atk_roll["ok"]:
             return atk_roll
+        # 明骰：抓这次攻击掷骰的完整加值链（前端据此把战斗的"d 点"过程显出来）
+        atk_line = explain_last_roll().get("line_format", "")
+        roll_detail = {"roll": atk_roll["raw"], "total": atk_roll.get("total"),
+                       "ac": target_com.ac, "outcome": atk_roll.get("outcome"),
+                       "line": atk_line,
+                       # 名字直接随事件走——战斗结束后 encounter 快照没了也能正确显示
+                       "actor_name": combatant.name, "target_name": target_com.name}
 
         if atk_roll.get("outcome") in ("success", "critical_success"):
             # Hit — roll damage, then resolve through the unified damage entry
@@ -3253,18 +3260,21 @@ def declare_intent(actor: str, intent: str, target: str = "",
 
             events.append(CombatEvent(
                 kind="attack", actor=actor, target=target,
-                detail={"roll": atk_roll["raw"], "ac": target_com.ac},
+                detail=dict(roll_detail),
                 roll_audit=SESSION.last_roll_audit,
             ))
             events.append(CombatEvent(
                 kind="hit", actor=actor, target=target,
-                detail={"damage": final_dmg, "damage_type": dmg_type,
-                        "target_hp": f"{target_com.hp}/{target_com.max_hp}"},
+                # 伤害结算过程：原始骰 → 抗性 → 最终伤害（前端显成 "3×1.5=4"）
+                detail={"damage": final_dmg, "damage_raw": dmg_raw,
+                        "resist": dmg.get("resist", 1.0), "damage_type": dmg_type,
+                        "target_hp": f"{target_com.hp}/{target_com.max_hp}",
+                        "target_name": target_com.name},
             ))
         else:
             events.append(CombatEvent(
                 kind="miss", actor=actor, target=target,
-                detail={"roll": atk_roll["raw"], "ac": target_com.ac},
+                detail=dict(roll_detail),
                 roll_audit=SESSION.last_roll_audit,
             ))
 
@@ -3273,7 +3283,8 @@ def declare_intent(actor: str, intent: str, target: str = "",
             target_com.is_dead = True
             events.append(CombatEvent(
                 kind="kill", actor=actor, target=target,
-                detail={"target_hp": f"0/{target_com.max_hp}"},
+                detail={"target_hp": f"0/{target_com.max_hp}",
+                        "target_name": target_com.name},
             ))
 
     # ── defend ──

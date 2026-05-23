@@ -46,6 +46,35 @@ class RenderEventsTest(unittest.TestCase):
     def test_plain_result_yields_nothing(self):
         self.assertEqual(_render_events("learn_skill", {"ok": True, "learned": {}}), [])
 
+    def test_combat_log_shows_roll_and_damage(self):
+        result = {"events": [
+            {"kind": "attack", "actor": "player", "target": "enemy_x",
+             "detail": {"line": "📊 你 攻击 杀人兔 d20=15 +4 = 19 vs DC10 → success",
+                        "target_name": "杀人兔"}},
+            {"kind": "hit", "actor": "player", "target": "enemy_x",
+             "detail": {"damage": 3, "damage_raw": 3, "resist": 1.0,
+                        "target_hp": "5/8", "target_name": "杀人兔"}},
+            {"kind": "kill", "target": "enemy_x", "detail": {"target_name": "杀人兔"}},
+        ]}
+        d = dict(_render_events("declare_intent", result))
+        lines = d["combat_log"]["lines"]
+        self.assertTrue(any("d20=15" in l for l in lines))           # 明骰掷骰可见
+        self.assertTrue(any("伤害" in l and "杀人兔" in l for l in lines))  # 伤害+目标名
+        self.assertTrue(any("倒下" in l for l in lines))
+
+    def test_combat_log_shows_resist_process(self):
+        result = {"events": [
+            {"kind": "hit", "actor": "p", "target": "e",
+             "detail": {"damage": 6, "damage_raw": 4, "resist": 1.5,
+                        "target_hp": "4/10", "target_name": "怪"}}]}
+        lines = dict(_render_events("declare_intent", result))["combat_log"]["lines"]
+        self.assertTrue(any("4×1.5=6" in l for l in lines))          # 抗性结算过程显出
+
+    def test_combat_log_only_for_declare_intent(self):
+        # end_combat 等也带 events，但不该把整段日志再刷一遍
+        result = {"events": [{"kind": "kill", "target": "e", "detail": {"target_name": "怪"}}]}
+        self.assertNotIn("combat_log", dict(_render_events("end_combat", result)))
+
 
 class PromptModeTest(unittest.TestCase):
     def test_rich_ui_appends_override(self):

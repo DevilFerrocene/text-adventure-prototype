@@ -67,7 +67,50 @@ def _render_events(name: str, result) -> list:
                 for c in enc.get("combatants", [])
             ],
         }))
+    # 战斗结算日志：仅 declare_intent（单个行动）——显出 d 点掷骰 + 伤害结算过程
+    if name == "declare_intent":
+        events = result.get("events")
+        if isinstance(events, list) and events:
+            names = {}
+            if isinstance(enc, dict):
+                names = {c.get("id"): c.get("name") for c in enc.get("combatants", [])}
+            lines = _combat_log_lines(events, names)
+            if lines:
+                out.append(("combat_log", {"lines": lines}))
     return out
+
+
+def _combat_log_lines(events: list, names: dict) -> list:
+    """把一次行动的事件翻成可读结算行：明骰命中/未命中 + 伤害过程 + 倒下。"""
+    lines = []
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        k = e.get("kind")
+        d = e.get("detail") or {}
+        # 名字优先取事件自带（战斗结束后 encounter 快照没了也准），回退 id→name 映射
+        actor = d.get("actor_name") or names.get(e.get("actor")) or e.get("actor") or ""
+        target = d.get("target_name") or names.get(e.get("target")) or e.get("target") or ""
+        if k in ("attack", "miss") and d.get("line"):
+            lines.append(d["line"])             # 明骰加值链（含 → success/failure）
+        elif k == "hit":
+            dr, res, dmg = d.get("damage_raw"), d.get("resist", 1.0), d.get("damage")
+            if dr is not None and res not in (None, 1.0):
+                proc = f"{dr}×{res:g}={dmg}"     # 原始骰 × 抗性 = 最终
+            elif dr is not None:
+                proc = f"{dr}"
+            else:
+                proc = f"{dmg}"
+            lines.append(f"  → {proc} 伤害（{target} {d.get('target_hp', '')}）")
+        elif k == "kill":
+            lines.append(f"  💀 {target} 倒下")
+        elif k == "buff_applied":
+            lines.append(f"{actor}：{d.get('effect', '获得增益')}")
+        elif k == "move":
+            lines.append(f"{actor} 移动 → 第 {d.get('to_rank')} 排")
+        elif k == "flee":
+            lines.append(f"{actor} 逃跑" + ("成功" if d.get("success") else "失败"))
+    return lines
 
 
 def _sse(event: str, data: dict) -> str:
