@@ -872,7 +872,7 @@ class Encounter:
     # 胜利时 end_combat 按 reward_mult 缩放经验/掉落。None=无契约。
     contract: Optional[dict] = None
     # §14-R3 借机攻击：{combatant_id: 上次借机的 round}。每个单位每回合最多借机一次，
-    # 比对当前 round 自动按回合复位（战斗是 transient，不入存档）。
+    # 比对当前 round 自动按回合复位。随 encounter 一并进存档（中途重载能续战）。
     aoo_used: dict = field(default_factory=dict)
 
 

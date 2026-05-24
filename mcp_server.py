@@ -22,6 +22,7 @@
   set_custom_attribute(scope, key, value, value_type, label, note)  添加/更新扩展属性
 """
 
+import functools
 import json
 import math
 import random
@@ -128,6 +129,21 @@ SESSION = Session()
 
 
 # ── helpers ───────────────────────────────────────────────────────
+
+def _autosave_after(fn):
+    """战斗类工具的装饰器：调用后落盘，让进行中的战斗（encounter）也进自动存档。
+    放在 @mcp.tool() 之下，使注册/直调的都是带落盘的版本；functools.wraps 保签名供 FastMCP 内省。
+    （_autosave 在下方定义——此处仅在【调用时】解析名字，故前置定义无碍。）"""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        try:
+            _autosave()
+        except Exception:
+            pass
+        return result
+    return wrapper
+
 
 def _require_started() -> Optional[dict]:
     if not SESSION.started:
@@ -3661,6 +3677,7 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None,
     snapshot["player_hp"] = player.hp
     snapshot["player_max_hp"] = player.max_hp
     snapshot["combatant_count"] = len(combatants)
+    _autosave()   # 开战即落盘——中途重载能回到战斗里，而非凭空消失
     return {"ok": True, "encounter": snapshot}
 
 
@@ -4246,6 +4263,7 @@ def _trigger_opportunity_attacks(enc, mover_id: str, mover, before, after,
 
 
 @mcp.tool()
+@_autosave_after   # 每次战斗行动后落盘，进行中的战斗也进自动存档
 def declare_intent(actor: str, intent: str, target: str = "",
                    skill_id: str = "", weapon: str = "", advantage: str = "") -> dict:
     """声明当前行动者的战斗意图。核心战斗工具。
@@ -4733,6 +4751,7 @@ def enemy_suggest(enemy_id: str) -> dict:
 
 
 @mcp.tool()
+@_autosave_after   # 战斗态对 combatant 造成伤害后落盘
 def deal_damage(target: str, amount: int, damage_type: str = "blunt",
                 reason: str = "") -> dict:
     """统一伤害入口——探索态炸/烧/砸场景物体，战斗态对 combatant 造成伤害。
@@ -5899,6 +5918,93 @@ def gm_set_flag(flag: str, value: bool = True, unlock_exit: str = "") -> dict:
     return result
 
 
+def _serialize_buff(b: Buff) -> dict:
+    """Buff → JSON dict。state.buffs 与 combatant.buffs 共用（与 _load_buffs 对称）。"""
+    return {
+        "id": b.id, "name": b.name, "desc": b.desc,
+        "polarity": b.polarity, "source_kind": b.source_kind,
+        "source_id": b.source_id, "tags": b.tags,
+        "stacks": b.stacks, "max_stacks": b.max_stacks,
+        "ticks": {t: {"emit_modifiers": [
+            {"id": m.id, "source_kind": m.source_kind, "source_id": m.source_id,
+             "target": m.target, "selector": m.selector, "op": m.op,
+             "value": m.value, "reason": m.reason, "visible": m.visible}
+            for m in bt.emit_modifiers
+        ]} for t, bt in b.ticks.items()},
+        "expire_on": b.expire_on, "visible": b.visible,
+    }
+
+
+def _serialize_combatant(c: Combatant) -> dict:
+    return {
+        "id": c.id, "name": c.name, "side": c.side,
+        "hp": c.hp, "max_hp": c.max_hp, "ac": c.ac, "speed": c.speed,
+        "damage_expr": c.damage_expr, "damage_type": c.damage_type,
+        "damage_types_resist": c.damage_types_resist,
+        "behavior_profile": c.behavior_profile, "skills": c.skills,
+        "buffs": [_serialize_buff(b) for b in c.buffs],
+        "stamina": c.stamina, "max_stamina": c.max_stamina,
+        "is_dead": c.is_dead, "archetype": c.archetype,
+        "cell": list(c.cell) if c.cell is not None else None,
+        "move_range": c.move_range, "rank": c.rank, "reach": c.reach,
+        "windup": c.windup, "poise": c.poise, "max_poise": c.max_poise,
+        "staggered": c.staggered,
+        "acted_major": c.acted_major, "acted_minor": c.acted_minor,
+    }
+
+
+def _serialize_encounter(enc: Encounter) -> dict:
+    """Encounter → JSON dict。log 是叙事素材、已展示过，不持久（恢复后空 log，机制不受影响）。"""
+    return {
+        "id": enc.id,
+        "combatants": {cid: _serialize_combatant(c) for cid, c in enc.combatants.items()},
+        "turn_order": enc.turn_order,
+        "round": enc.round,
+        "active_idx": enc.active_idx,
+        "rank_depth": enc.rank_depth,
+        "action_economy": enc.action_economy,
+        "contract": enc.contract,
+        "aoo_used": enc.aoo_used,
+    }
+
+
+def _deserialize_combatant(d: dict) -> Combatant:
+    return Combatant(
+        id=d["id"], name=d.get("name", d["id"]), side=d.get("side", "enemy"),
+        hp=d.get("hp", 0), max_hp=d.get("max_hp", 0),
+        ac=d.get("ac", 10), speed=d.get("speed", 10),
+        damage_expr=d.get("damage_expr", "1d4"), damage_type=d.get("damage_type", "blunt"),
+        damage_types_resist=d.get("damage_types_resist", {}),
+        behavior_profile=d.get("behavior_profile", "aggressive"),
+        skills=d.get("skills", []),
+        buffs=_load_buffs(d.get("buffs", [])),
+        stamina=d.get("stamina", 0), max_stamina=d.get("max_stamina", 0),
+        is_dead=d.get("is_dead", False), archetype=d.get("archetype", ""),
+        cell=tuple(d["cell"]) if d.get("cell") is not None else None,
+        move_range=d.get("move_range", 2), rank=d.get("rank", 0), reach=d.get("reach", 99),
+        windup=d.get("windup"), poise=d.get("poise", 0), max_poise=d.get("max_poise", 0),
+        staggered=d.get("staggered", False),
+        acted_major=d.get("acted_major", False), acted_minor=d.get("acted_minor", False),
+    )
+
+
+def _deserialize_encounter(d: Optional[dict]) -> Optional[Encounter]:
+    if not d:
+        return None
+    return Encounter(
+        id=d.get("id", "enc"),
+        combatants={cid: _deserialize_combatant(cd) for cid, cd in d.get("combatants", {}).items()},
+        turn_order=d.get("turn_order", []),
+        round=d.get("round", 1),
+        active_idx=d.get("active_idx", 0),
+        log=[],
+        rank_depth=d.get("rank_depth", 2),
+        action_economy=d.get("action_economy", False),
+        contract=d.get("contract"),
+        aoo_used=d.get("aoo_used", {}),
+    )
+
+
 def _serialize_state(state: GameState, world_name: str) -> dict:
     """把 GameState 序列化成可 JSON 化的 dict。save_game / _autosave 共用。"""
     return {
@@ -5944,22 +6050,7 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
             }
             for rid, rs in state.room_snapshots.items()
         },
-        "buffs": [
-            {
-                "id": b.id, "name": b.name, "desc": b.desc,
-                "polarity": b.polarity, "source_kind": b.source_kind,
-                "source_id": b.source_id, "tags": b.tags,
-                "stacks": b.stacks, "max_stacks": b.max_stacks,
-                "ticks": {t: {"emit_modifiers": [
-                    {"id": m.id, "source_kind": m.source_kind, "source_id": m.source_id,
-                     "target": m.target, "selector": m.selector, "op": m.op,
-                     "value": m.value, "reason": m.reason, "visible": m.visible}
-                    for m in bt.emit_modifiers
-                ]} for t, bt in b.ticks.items()},
-                "expire_on": b.expire_on, "visible": b.visible,
-            }
-            for b in state.buffs
-        ],
+        "buffs": [_serialize_buff(b) for b in state.buffs],
         "skills": [_serialize_skill(s) for s in state.skills],
         "equipped": state.equipped,
         "pending_contract": state.pending_contract,   # §12：未消费的危机合约
@@ -5968,6 +6059,9 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
         "enemy_field": state.enemy_field,              # 敌人空间层（坐标/视野/仇恨）
         "player_attrs": state.player_attrs,
         "world_attrs": state.world_attrs,
+        # 进行中的战斗（双方血量/走位/蓄力/破防/回合）。挂在 Session 上、不属 GameState，
+        # 故单独序列化进存档——否则中途重载会丢战斗、血量还会"穿越"回开打前。
+        "encounter": _serialize_encounter(SESSION.encounter) if SESSION.encounter else None,
     }
 
 
@@ -6103,6 +6197,7 @@ def _session_from_data(data: dict) -> Optional[Session]:
     )
 
     session = Session(world_name=world_name, world=new_world, state=new_state)
+    session.encounter = _deserialize_encounter(data.get("encounter"))   # 恢复进行中的战斗
     # 恢复后重建 buff 派生的全局 modifier 池（modifiers 不入存档，由 buff/skill 重新发射）
     global SESSION
     _prev = SESSION

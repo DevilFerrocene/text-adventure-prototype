@@ -165,5 +165,61 @@ class ResetGameTest(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class CombatPersistenceTest(unittest.TestCase):
+    """进行中的战斗（encounter）也要进自动存档——否则中途重载会丢战斗、血量还会"穿越"回开打前。"""
+
+    def setUp(self):
+        _clear_autosave()
+        mcp_server.start_game("aincrad")
+        st = mcp_server.SESSION.state
+        st.vitals.hp = st.vitals.max_hp = 20   # 撑住别被一击秒，专测持久化
+
+    def tearDown(self):
+        _clear_autosave()
+
+    def test_start_combat_writes_encounter_to_autosave(self):
+        mcp_server.start_combat(canon=["killer_rabbit"])
+        data = json.loads(_autosave_path().read_text(encoding="utf-8"))
+        self.assertIsNotNone(data.get("encounter"))
+        self.assertIn("player", data["encounter"]["combatants"])
+
+    def test_restart_mid_combat_resumes_encounter(self):
+        mcp_server.start_combat(canon=["killer_rabbit"])
+        enc = mcp_server.SESSION.encounter
+        enc.combatants["player"].hp = 7            # 战斗中受了伤
+        enc.round = 3
+        rid = next(cid for cid in enc.combatants if cid != "player")
+        enc.combatants[rid].hp = 2
+        mcp_server._autosave()                     # 落盘（模拟战斗行动后）
+        self.assertTrue(_simulate_process_restart())
+        renc = mcp_server.SESSION.encounter
+        self.assertIsNotNone(renc, "重启后应仍在战斗中")
+        self.assertTrue(mcp_server.SESSION.in_combat)
+        self.assertEqual(renc.combatants["player"].hp, 7)   # 伤势保留，没"穿越"回 20
+        self.assertEqual(renc.combatants[rid].hp, 2)        # 敌人血量也保留
+        self.assertEqual(renc.round, 3)
+
+    def test_grid_combat_preserves_combatant_cells(self):
+        # 棋盘战斗：敌人就位 enemy_field 后开战，combatant.cell 须随存档往返
+        # （草原是刷怪场，打在场的怪走 request_combat，不能 start_combat 点名）
+        st = mcp_server.SESSION.state
+        st.position = "plains"
+        st.cell = (2, 3)
+        st.active_spawns = ["killer_rabbit"]
+        st.enemy_field = [{"uid": "killer_rabbit", "enemy_id": "killer_rabbit",
+                           "cell": [4, 3], "sight": 2, "aggro": 1, "state": "hostile"}]
+        r = mcp_server.request_combat("被发现")
+        self.assertTrue(r["ok"])
+        cells_before = {cid: c.cell for cid, c in mcp_server.SESSION.encounter.combatants.items()}
+        mcp_server._autosave()
+        self.assertTrue(_simulate_process_restart())
+        cells_after = {cid: c.cell for cid, c in mcp_server.SESSION.encounter.combatants.items()}
+        self.assertEqual(cells_after, cells_before)        # 走位坐标无损
+
+    def test_no_encounter_field_when_not_in_combat(self):
+        data = json.loads(_autosave_path().read_text(encoding="utf-8"))
+        self.assertIsNone(data.get("encounter"))           # 没开战 → encounter 为空
+
+
 if __name__ == "__main__":
     unittest.main()
