@@ -383,7 +383,7 @@ body{ display:block; align-items:stretch; height:100vh; overflow:hidden; }
   <div id="app">
     <aside class="col col-l">
       <section class="pcard"><div class="pcard-h"><span>👤 角色状态</span></div><div id="status-body" class="status-body"></div></section>
-      <section class="pcard"><div class="pcard-h"><span>📍 位置与出口</span></div><div id="loc-body"></div></section>
+      <section class="pcard"><div class="pcard-h"><span>🗺 场地·位置</span></div><div id="loc-body"></div></section>
       <section class="pcard"><div class="pcard-h"><span>🧰 会话工具</span></div>
         <div id="sesstools">
           <button data-act="save"><span class="ic">💾</span>存档</button>
@@ -608,20 +608,21 @@ function renderStatus(s){
   cells+=cell('gold','金币',v.gold);
   b.innerHTML=h+`<div class="st-grid">${cells}</div>`;
 }
-// ── 左栏：位置与出口（小罗盘 + 出口 chip）──
+// ── 左栏：场地·位置（有棋盘画棋盘，否则退回出口 chip）──
 const DIR_CN={north:'北',south:'南',east:'东',west:'西',up:'上',down:'下','in':'进','out':'出'};
 function renderLocation(P){
   const b=$('#loc-body'); if(!b) return;
   const sc=P&&P.scene; if(!sc){ b.innerHTML='<div class="pempty">—</div>'; return; }
-  const exits=sc.exits||[]; const find=d=>exits.find(e=>e.dir===d);
-  const cc=(d,txt)=>{const e=find(d); return `<div class="cc${e?(e.locked?' on locked':' on'):''}">${txt}</div>`;};
-  const compass=`<div class="compass">`+
-    `<div class="cc"></div>${cc('north','北')}<div class="cc"></div>`+
-    `${cc('west','西')}<div class="cc mid">◆</div>${cc('east','东')}`+
-    `<div class="cc"></div>${cc('south','南')}<div class="cc"></div></div>`;
+  const exits=sc.exits||[];
   const chips=exits.map(e=>`<span class="ec${e.locked?' locked':''}" ${e.locked?'':`data-go="${e.dir}"`}>`+
     `${DIR_CN[e.dir]||e.dir}${e.locked?' 🔒':''}</span>`).join('') || '<span class="ec locked">无出口</span>';
-  b.innerHTML=`<div class="loc-name">${esc2(sc.room||'')}</div>${compass}<div class="exit-chips">${chips}</div>`;
+  if(P.board){
+    // 这间房有二维棋盘 → 直接画一张紧凑棋盘 + 一行出口 chip（可点走位）
+    b.innerHTML=renderBoard(P.board, 256, true)+`<div class="exit-chips" style="margin-top:10px">${chips}</div>`;
+  }else{
+    // 无棋盘房：保留位置名 + 出口 chip
+    b.innerHTML=`<div class="loc-name">${esc2(sc.room||'')}</div><div class="exit-chips">${chips}</div>`;
+  }
 }
 // ── 右栏：场景对象（筛选 + 距离）──
 const SO_ICON={container:'📦',npc:'🧍',scenery:'🗿',document:'📜',item:'🎒','陈设':'🪵','生物':'☠'};
@@ -826,14 +827,15 @@ function renderMap(map){
   wrap.innerHTML = `<svg width="${W}" height="${H}">${lines}</svg>${nodes}`;
 }
 const BOARD_GLYPH = {object:'◈', ambient:'·', landmark:'◇', exit:'⛬', poi:'?', enemy:'☠'};
-function renderBoard(b){
+function renderBoard(b, avail=320, compact=false){
   if(!b) return '<div class="pempty">这间房没有棋盘布局——满屋皆在手边，随手可取。</div>';
   const at = {};                                   // "x,y" → token
   (b.tokens||[]).forEach(t=>{ at[t.x+','+t.y]=t; });
   const blocked = new Set((b.blocked||[]).map(c=>c[0]+','+c[1]));
   const px=b.player.x, py=b.player.y;
-  // 单元尺寸：随宽度自适应，尽量塞进抽屉（约 320px 可用）
-  const cs = Math.max(46, Math.min(64, Math.floor(320 / b.width)));
+  // 单元尺寸：扣掉格间距后按可用宽自适应（侧栏窄、抽屉宽）
+  const cs = Math.max(compact?26:46, Math.min(compact?52:64,
+             Math.floor((avail-(b.width-1)*4)/b.width)));
   let cells='';
   for(let y=0; y<b.height; y++){
     for(let x=0; x<b.width; x++){
@@ -841,14 +843,17 @@ function renderBoard(b){
       const cls=['bcell']; if(t) cls.push('b-'+t.kind); if(t&&t.kind==='enemy') cls.push('b-enemy-'+(t.state||'idle')); if(blocked.has(key)) cls.push('blocked');
       if(here) cls.push('here');
       const g = t ? `<span class="bg">${BOARD_GLYPH[t.kind]||'·'}</span>` : '';
-      const nm = t ? `<span class="bn">${esc2(t.name)}</span>` : '';
+      const nm = (t && (!compact || cs>=40)) ? `<span class="bn">${esc2(t.name)}</span>` : '';
       const you = here ? '<span class="byou">你</span>' : '';
       cells += `<div class="${cls.join(' ')}" style="width:${cs}px;height:${cs}px">${g}${nm}${you}</div>`;
     }
   }
-  return `<div class="bhint">${esc2(b.room)} · 北↑ · 「你」为当前位置，说"走到XX"即可移动</div>`+
-         `<div class="board" style="grid-template-columns:repeat(${b.width},${cs}px)">${cells}</div>`+
-         `<div class="blegend">◈ 物件/人 · ☠ 敌(黄=未察觉/红=已锁定) · ? 未探明 · ⛬ 出口 · ◇ 落脚点 · ▓ 障碍</div>`;
+  const hint = compact ? `${esc2(b.room)} · 北↑`
+                       : `${esc2(b.room)} · 北↑ · 「你」为当前位置，说"走到XX"即可移动`;
+  const legend = compact ? '' :
+    `<div class="blegend">◈ 物件/人 · ☠ 敌(黄=未察觉/红=已锁定) · ? 未探明 · ⛬ 出口 · ◇ 落脚点 · ▓ 障碍</div>`;
+  return `<div class="bhint">${hint}</div>`+
+         `<div class="board" style="grid-template-columns:repeat(${b.width},${cs}px)">${cells}</div>`+legend;
 }
 // 交互：顶栏 tab / 抽屉内切换 / 关闭 / 快捷键
 document.querySelectorAll('#tabs .tab').forEach(t=>t.onclick=()=>toggleDrawer(t.dataset.tab));
