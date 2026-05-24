@@ -135,7 +135,8 @@ class PanelsPayloadTest(unittest.TestCase):
         self.assertGreaterEqual(len(p["quests"]), 1)  # 开场任务「破局」在
 
     def test_board_none_in_gridless_room(self):
-        # 营地无 grid → board=None（前端据此显示"满屋皆在手边"）
+        # 未挂 grid 的房间 → board=None（前端据此显示"满屋皆在手边"）
+        mcp_server.SESSION.state.position = "floor_2_gate"      # 该房无 grid
         self.assertIsNone(panels_payload()["board"])
 
     def test_board_payload_in_gridded_room(self):

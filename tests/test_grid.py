@@ -163,8 +163,8 @@ class ApproachToolTest(unittest.TestCase):
         self.assertFalse(r["ok"])
 
     def test_approach_in_gridless_room_errors(self):
-        m.move("west")                                          # 回 camp（无 grid）
-        r = m.approach("篝火")
+        m.SESSION.state.position = "floor_2_gate"               # 无 grid 的房间
+        r = m.approach("水晶")
         self.assertFalse(r["ok"])
 
 
@@ -172,7 +172,8 @@ class GridlessBackcompatTest(unittest.TestCase):
     """无 grid 的房间：满屋皆在手边，零门控（旧行为不变）。"""
 
     def setUp(self):
-        self.assertTrue(m.start_game("aincrad")["ok"])           # camp 无 grid
+        self.assertTrue(m.start_game("aincrad")["ok"])
+        m.SESSION.world.get_room("camp").grid = None   # 摘掉营地棋盘，模拟未挂 grid 的房间
 
     def test_scene_grid_is_none(self):
         sc = m.get_scene()["scene"]
@@ -209,8 +210,8 @@ class CellPersistenceTest(unittest.TestCase):
         m.move("east")
         m.approach("吧台")
         m.save_game("grid_cell_test")
-        m.start_game("aincrad")                                 # 清内存
-        self.assertEqual(tuple(m.SESSION.state.cell), (0, 0))
+        m.start_game("aincrad")                                 # 清内存 → 落回营地 entry
+        self.assertEqual(tuple(m.SESSION.state.cell), (2, 2))
         m.load_game("grid_cell_test")
         self.assertEqual(tuple(m.SESSION.state.cell), (3, 1))
 

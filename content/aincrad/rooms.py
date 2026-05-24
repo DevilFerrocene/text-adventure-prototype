@@ -28,6 +28,23 @@ def add_all(world):
         tags=["safe_zone", "no_combat", "respawn_point", "floor_1"],
         ambient=["磨剑石:misc", "成堆的补给木箱:furniture", "篝火边的劈柴:club",
                  "拴马桩旁的石块:rock"],
+        # 6×6 营寨：篝火居中(进门落点)，武器架/铁剑/短剑在北、薇拉与登记官分两侧、
+        # 老马罗补给摊在东、传送水晶/誓约祭坛在西、北门通草原、东门进酒馆。
+        grid=RoomGrid(
+            width=6, height=6, entry=(2, 2),
+            objects={
+                "weapon_rack": (0, 0), "rack_iron_sword": (1, 0), "rack_dagger": (3, 0),
+                "skill_trainer": (0, 1), "campfire": (2, 1), "registry_officer": (4, 1),
+                "teleport_crystal": (0, 3), "camp_merchant": (4, 3),
+                "oath_altar": (0, 4), "lost_scout": (3, 4),
+                "coin_pouch": (0, 5), "field_notes": (2, 5),
+            },
+            ambient={
+                "磨剑石": (4, 0), "篝火边的劈柴": (1, 2),
+                "成堆的补给木箱": (2, 3), "拴马桩旁的石块": (4, 5),
+            },
+            exits={"north": (2, 0), "east": (5, 2)},
+        ),
     ))
 
     # ── 破局路一：锈角酒馆 + 必触发的斗殴 ───────────────────────────
@@ -97,6 +114,20 @@ def add_all(world):
         enemies=["killer_rabbit", "frenzy_boar", "gale_wolf", "mistbloom"],
         ambient=["没膝的草浪:foliage", "零星的碎石:rock", "风干的兽骨:misc",
                  "半埋的朽木桩:furniture", "尖锐的断枝:club"],
+        # 6×6 草原：开阔野地，神龛在北、洞窟裂隙在东南、三向出口（南营地/北迷宫/西树林）。
+        grid=RoomGrid(
+            width=6, height=6, entry=(2, 3),
+            objects={
+                "mist_shrine": (2, 0), "erin_talisman": (4, 0),
+                "tall_grass": (3, 3), "field_chest": (2, 4),
+                "mist_cave_entrance": (5, 4),
+            },
+            ambient={
+                "没膝的草浪": (1, 1), "风干的兽骨": (3, 1), "半埋的朽木桩": (4, 2),
+                "尖锐的断枝": (1, 3), "零星的碎石": (4, 4),
+            },
+            exits={"north": (0, 0), "west": (0, 2), "south": (2, 5)},
+        ),
     ))
 
     # ── 林边 / 树林（破局路三：闯林进守林员小屋取手斧）──────────────
@@ -121,6 +152,17 @@ def add_all(world):
         enemies=["gale_wolf"],
         ambient=["半垂的枯枝:club", "厚厚的针叶层:foliage", "倒伏的朽木:furniture",
                  "松动的石块:rock", "缠人的藤蔓:foliage", "尖头的断木刺:blade"],
+        # 5×5 密林：巨树在深处、密松在西、小屋入口(in)在东北深处、东口回草原。
+        grid=RoomGrid(
+            width=5, height=5, entry=(2, 2),
+            objects={"dense_pines": (0, 2), "forest_trees": (2, 4)},
+            ambient={
+                "倒伏的朽木": (0, 0), "厚厚的针叶层": (2, 0),
+                "松动的石块": (1, 1), "半垂的枯枝": (3, 1),
+                "缠人的藤蔓": (1, 3), "尖头的断木刺": (3, 3),
+            },
+            exits={"in": (4, 0), "east": (4, 2)},
+        ),
     ))
     world.add_room(Room(
         id="forester_hut",
@@ -139,6 +181,16 @@ def add_all(world):
         tags=["hidden", "shelter", "floor_1"],
         ambient=["积灰的旧工具:misc", "墙上的锈钉:blade", "劈好的柴火:club",
                  "塌了的吊床:foliage", "桌上的空酒瓶:bottle"],
+        # 4×4 小屋：工具墙在西北、手斧插在劈柴墩旁、门(out)在西南角。
+        grid=RoomGrid(
+            width=4, height=4, entry=(1, 3),
+            objects={"dusty_shelf": (0, 0), "chopping_block": (0, 2), "forester_hatchet": (1, 2)},
+            ambient={
+                "墙上的锈钉": (1, 0), "桌上的空酒瓶": (3, 0),
+                "积灰的旧工具": (0, 1), "劈好的柴火": (3, 1), "塌了的吊床": (3, 2),
+            },
+            exits={"out": (0, 3)},
+        ),
     ))
 
     world.add_room(Room(
@@ -162,6 +214,20 @@ def add_all(world):
         enemies=["gale_wolf", "shadow_lurker"],
         ambient=["碎裂的石砖:rock", "崩落的廊柱残段:club", "墙缝里的骨殖:misc",
                  "锈蚀的断剑:blade"],
+        # 5×5 迷宫：四根廊柱(blocked)切出回路，符文门在北壁、宝箱在西南、南口回草原、北门叩首领。
+        grid=RoomGrid(
+            width=5, height=5, entry=(2, 3),
+            blocked=[(1, 1), (3, 1), (1, 3), (3, 3)],
+            objects={
+                "rune_door": (2, 0), "trap_floor": (2, 2),
+                "treasure_chest": (0, 4), "wall_glyph": (1, 4),
+            },
+            ambient={
+                "碎裂的石砖": (1, 0), "墙缝里的骨殖": (3, 0),
+                "崩落的廊柱残段": (0, 2), "锈蚀的断剑": (4, 2),
+            },
+            exits={"north": (0, 0), "south": (2, 4)},
+        ),
     ))
 
     world.add_room(Room(
@@ -184,6 +250,16 @@ def add_all(world):
         tags=["boss_room", "floor_1", "climax"],
         enemies=["warden_bladeguard", "warden_gorehoof"],
         ambient=["地上的碎石粉:rock", "崩落的石殿残块:rock", "前人遗落的断矛:blade"],
+        # 5×5 圆殿：竞技场居中、回廊门在其北、南门回迷宫、北门(胜后解锁)上第二层。
+        grid=RoomGrid(
+            width=5, height=5, entry=(2, 3),
+            objects={"corridor_gate": (2, 1), "warden_arena": (2, 2)},
+            ambient={
+                "崩落的石殿残块": (1, 1), "地上的碎石粉": (0, 2),
+                "前人遗落的断矛": (4, 2),
+            },
+            exits={"north": (2, 0), "south": (2, 4)},
+        ),
     ))
 
     # 雾隐洞窟（草原隐藏分支）
@@ -205,6 +281,16 @@ def add_all(world):
         zone="雾隐洞窟",
         coords=(1, 1),   # 草原东侧隐藏裂隙（与林边 -1,1 区分，避免地图叠格）
         tags=["hidden", "treasure", "floor_1"],
+        # 4×4 洞窟：水晶/补给箱在西、石笋与白骨在东、裂隙出口(out)在西南。
+        grid=RoomGrid(
+            width=4, height=4, entry=(1, 3),
+            objects={"cave_crystal": (1, 1), "cave_chest": (0, 2)},
+            ambient={
+                "发光的菌簇": (0, 0), "松动的钟乳石": (2, 0),
+                "锋利的石笋碎片": (3, 1), "散落的白骨": (3, 2),
+            },
+            exits={"out": (0, 3)},
+        ),
     ))
 
     # 第二层入口（击败层守后解锁）

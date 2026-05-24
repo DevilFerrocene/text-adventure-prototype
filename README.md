@@ -29,7 +29,7 @@
 - **软重生**：死亡不是 game over——回满血、掉一半金币、被烙印拽回营地水晶。战斗倒下自动触发，探索/叙事死亡 GM 裁定。鼓励 6 血绝境里大胆试错。
 - **示例世界「苍穹回廊」**：日式异世界逐层攻略——剑技 / 炎霜雷影属性克制 / 等级成长 / 逐层 Boss 攻略。**冷开局是一场"破局"**：玩家落在初始小镇，6 点血、一双空拳（1d1）、0 金、0 人脉，连城外的杀人兔都打不死——第一件事是靠脑子和胆子挣出活路（酒馆挨打换补偿 / 掰枯树当棍 / 闯林捡手斧 / 或任何即兴解法）。
 
-当前规模：46 个引擎工具，1 个世界（破局开场 + 第一层），367 个回归测试。
+当前规模：46 个引擎工具，1 个世界（破局开场 + 第一层），372 个回归测试。
 
 ---
 
@@ -124,7 +124,7 @@ content/aincrad/       # 示例世界「苍穹回廊」（拆包：canon/enemies
 standalone/            # 独立运行层：config / tools(工具桥) / agent(loop) / prompt / tui / cli
 .claude/skills/play/   # GM skill（导演 prompt，与 .agents/ 同步）
 .agents/skills/play/
-tests/                 # 367 个回归测试
+tests/                 # 372 个回归测试
 ```
 
 **分层与依赖**：
@@ -149,7 +149,7 @@ python -m pytest tests/ -q
 content 是纯数据。照着 `content/aincrad/` 写一份新世界——可以是单文件 `content/<world>.py`，也可以像 aincrad 那样拆成包（`canon` 世界观+规则书 / `enemies` / `skills` / `rooms` / `objects` / `state` 初始态，`__init__.register()` 组装）。引擎只认 `register(world)` 这一个入口，单文件还是拆包对它透明。写好后在 `mcp_server.py` 的 `WORLDS` 字典里注册即可。
 
 - **零件**：房间 `Room`、物体 `GameObject`、敌人 `EnemyTemplate`、技能 `Skill`、任务 `QuestEntry`，可选 `RuleBook`（自定义属性表/装备槽/徒手伤害，不写就用默认）、可选 `RoomGrid`（给房间挂二维棋盘加空间感，物体/陈设/出口钉到格上，不写就"满屋皆在手边"）。物体的 `on_destroyed`/`on_hit`、affordance 的 `effect`、武器的 `scaling` 都复用同一套数据 DSL，无需改引擎。
-- **改完先校验**：`python -m standalone.cli --check` 会跑 `GameWorld.validate()`，把"出口/物体/敌人/技能等字符串 id 拼错"在作者期就报出来（人话报错），不必等玩到那里才崩。
+- **改完先校验**：`python -m standalone.cli --check` 会跑 `GameWorld.validate()`，把"出口/物体/敌人/技能等字符串 id 拼错"、以及"棋盘坐标越界/实体叠格/把东西墙进死角玩家走不到"在作者期就报出来（人话报错），不必等玩到那里才崩。
 
 ---
 

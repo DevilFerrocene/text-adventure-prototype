@@ -50,5 +50,54 @@ class ValidatorCatchesTest(unittest.TestCase):
         self.assertTrue(any("ghost_boss" in p for p in w.validate()))
 
 
+class GridValidatorCatchesTest(unittest.TestCase):
+    """二维棋盘校验：坐标越界 / 叠格 / 引用错 / 进门不可站 / 实体被墙死。"""
+
+    def _world(self):
+        return GameWorld(content_module=mcp_server.WORLDS["aincrad"])
+
+    def test_out_of_bounds_coord(self):
+        from core.types import RoomGrid
+        w = self._world()
+        r = w.get_room("tavern")
+        r.grid = RoomGrid(width=3, height=3, entry=(0, 0),
+                          objects={"tavern_keeper": (9, 9)})
+        self.assertTrue(any("越界" in p for p in w.validate()))
+
+    def test_overlap_two_entities_same_cell(self):
+        from core.types import RoomGrid
+        w = self._world()
+        r = w.get_room("tavern")
+        r.grid = RoomGrid(width=3, height=3, entry=(0, 0),
+                          objects={"tavern_keeper": (1, 1)},
+                          landmarks={"吧台": (1, 1)})
+        self.assertTrue(any("叠了两样" in p for p in w.validate()))
+
+    def test_grid_object_not_in_room(self):
+        from core.types import RoomGrid
+        w = self._world()
+        r = w.get_room("tavern")
+        r.grid = RoomGrid(width=3, height=3, entry=(0, 0),
+                          objects={"ghost_thing": (1, 1)})
+        self.assertTrue(any("不在 room.objects" in p for p in w.validate()))
+
+    def test_entry_not_standable(self):
+        from core.types import RoomGrid
+        w = self._world()
+        r = w.get_room("tavern")
+        r.grid = RoomGrid(width=3, height=3, entry=(1, 1), blocked=[(1, 1)])
+        self.assertTrue(any("进门落点" in p for p in w.validate()))
+
+    def test_entity_walled_off_unreachable(self):
+        from core.types import RoomGrid
+        w = self._world()
+        r = w.get_room("tavern")
+        # 把酒瓶放中心 (2,2)、八方全堵 → 玩家从 entry(0,0) 走不到
+        r.grid = RoomGrid(width=5, height=5, entry=(0, 0),
+                          ambient={"桌上的酒瓶": (2, 2)},
+                          blocked=[(1, 1), (2, 1), (3, 1), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)])
+        self.assertTrue(any("被墙死" in p for p in w.validate()))
+
+
 if __name__ == "__main__":
     unittest.main()

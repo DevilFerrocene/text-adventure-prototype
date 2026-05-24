@@ -113,6 +113,7 @@ class GameWorld:
             for eid in (getattr(room, "enemies", []) or []):
                 if eid not in enemies:
                     problems.append(f"房间 {rid!r} 引用了不存在的敌人 {eid!r}")
+            problems += self._validate_grid(rid, room)
 
         for oid, obj in objs.items():
             _check_objs(getattr(obj, "reveals_objects", []), f"物体 {oid!r} 的 reveals_objects")
@@ -136,4 +137,94 @@ class GameWorld:
         if self.initial_state and self.initial_state.position not in rooms:
             problems.append(f"初始位置 {self.initial_state.position!r} 不是已注册房间")
 
+        return problems
+
+    def _validate_grid(self, rid: str, room) -> List[str]:
+        """二维棋盘校验：坐标越界 / 实体叠格 / 引用错 / 进门落点不可站 / 实体走不到。
+        把作者手摆格子时的常见错误（把东西墙进死角、出口够不着）在 --check 期就抓出来。"""
+        grid = getattr(room, "grid", None)
+        if not grid:
+            return []
+        problems: List[str] = []
+        W, H = grid.width, grid.height
+
+        def inb(c):
+            return 0 <= c[0] < W and 0 <= c[1] < H
+
+        # 1. 越界 + 引用完整性
+        ambient_names = {e.split(":", 1)[0].strip() for e in (getattr(room, "ambient", []) or [])}
+        room_obj_ids = set(getattr(room, "objects", []) or [])
+        for oid, c in grid.objects.items():
+            if not inb(c):
+                problems.append(f"房间 {rid!r} 棋盘：物体 {oid!r} 坐标 {tuple(c)} 越界（{W}×{H}）")
+            if oid not in room_obj_ids:
+                problems.append(f"房间 {rid!r} 棋盘：钉了物体 {oid!r}，但它不在 room.objects 里")
+        for nm, c in grid.ambient.items():
+            if not inb(c):
+                problems.append(f"房间 {rid!r} 棋盘：陈设 {nm!r} 坐标 {tuple(c)} 越界（{W}×{H}）")
+            if nm not in ambient_names:
+                problems.append(f"房间 {rid!r} 棋盘：钉了陈设 {nm!r}，但它不在 room.ambient 里")
+        for d, c in grid.exits.items():
+            if not inb(c):
+                problems.append(f"房间 {rid!r} 棋盘：出口 {d!r} 坐标 {tuple(c)} 越界（{W}×{H}）")
+            if d not in (getattr(room, "exits", {}) or {}):
+                problems.append(f"房间 {rid!r} 棋盘：钉了出口 {d!r}，但它不在 room.exits 里")
+        for nm, c in grid.landmarks.items():
+            if not inb(c):
+                problems.append(f"房间 {rid!r} 棋盘：地标 {nm!r} 坐标 {tuple(c)} 越界（{W}×{H}）")
+        for c in grid.blocked:
+            if not inb(c):
+                problems.append(f"房间 {rid!r} 棋盘：障碍格 {tuple(c)} 越界（{W}×{H}）")
+
+        # 2. 叠格：物体/陈设/地标/出口互不重叠
+        placed = {}  # cell -> 标签
+        for label, mapping in (("物体", grid.objects), ("陈设", grid.ambient),
+                               ("出口", grid.exits), ("地标", grid.landmarks)):
+            for key, c in mapping.items():
+                c = tuple(c)
+                if c in placed:
+                    problems.append(f"房间 {rid!r} 棋盘：{c} 上叠了两样（{placed[c]} 与 {label} {key!r}）")
+                else:
+                    placed[c] = f"{label} {key!r}"
+
+        if problems:        # 坐标都没摆对，连通性检查就别跑了（噪声）
+            return problems
+
+        # 3. 连通性：进门落点可站，且每个实体都走得到
+        occupied = {tuple(c) for c in grid.objects.values()} | {tuple(c) for c in grid.ambient.values()}
+        blocked = {tuple(c) for c in grid.blocked}
+
+        def standable(c):
+            return inb(c) and tuple(c) not in blocked and tuple(c) not in occupied
+
+        entry = tuple(grid.entry)
+        if not standable(entry):
+            problems.append(f"房间 {rid!r} 棋盘：进门落点 entry={entry} 不可站（被占/障碍/越界）")
+            return problems
+        # BFS 可达集
+        seen, frontier = {entry}, [entry]
+        while frontier:
+            nxt = []
+            for cx, cy in frontier:
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        if dx or dy:
+                            n = (cx + dx, cy + dy)
+                            if n not in seen and standable(n):
+                                seen.add(n)
+                                nxt.append(n)
+            frontier = nxt
+        # 物体/陈设：至少一个相邻可站格在可达集里（站旁边交互）
+        for label, mapping in (("物体", grid.objects), ("陈设", grid.ambient)):
+            for key, c in mapping.items():
+                cx, cy = tuple(c)
+                neigh = [(cx + dx, cy + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                         if (dx or dy)]
+                if not any(standable(n) and n in seen for n in neigh):
+                    problems.append(f"房间 {rid!r} 棋盘：{label} {key!r}@{tuple(c)} 四周无可达落脚格——被墙死了，玩家走不到")
+        # 出口/地标：本格须可站且可达
+        for label, mapping in (("出口", grid.exits), ("地标", grid.landmarks)):
+            for key, c in mapping.items():
+                if tuple(c) not in seen:
+                    problems.append(f"房间 {rid!r} 棋盘：{label} {key!r}@{tuple(c)} 从进门处走不到（不可站或被隔断）")
         return problems
