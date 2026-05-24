@@ -175,8 +175,22 @@ class GameWorld:
         for c in grid.blocked:
             if not inb(c):
                 problems.append(f"房间 {rid!r} 棋盘：障碍格 {tuple(c)} 越界（{W}×{H}）")
+        # 探索点：越界 + hint 非空 + payload.kind 合法 + 伏击敌人引用存在
+        VALID_POI_KINDS = {"loot", "clue", "event", "trap", "ambush"}
+        for p in (getattr(grid, "pois", []) or []):
+            if not inb(p.cell):
+                problems.append(f"房间 {rid!r} 棋盘：探索点 {p.id!r} 坐标 {tuple(p.cell)} 越界（{W}×{H}）")
+            if not getattr(p, "hint", ""):
+                problems.append(f"房间 {rid!r} 棋盘：探索点 {p.id!r} 缺 hint（明面感官提示，不能空）")
+            pkind = (p.payload or {}).get("kind")
+            if pkind not in VALID_POI_KINDS:
+                problems.append(f"房间 {rid!r} 棋盘：探索点 {p.id!r} 的 payload.kind={pkind!r} 非法（须属 {sorted(VALID_POI_KINDS)}）")
+            if pkind == "ambush":
+                for e in (p.payload.get("enemies", []) or []):
+                    if isinstance(e, str) and e not in self.enemies:
+                        problems.append(f"房间 {rid!r} 棋盘：探索点 {p.id!r} 伏击引用了不存在的敌人 {e!r}")
 
-        # 2. 叠格：物体/陈设/地标/出口互不重叠
+        # 2. 叠格：物体/陈设/地标/出口/探索点互不重叠
         placed = {}  # cell -> 标签
         for label, mapping in (("物体", grid.objects), ("陈设", grid.ambient),
                                ("出口", grid.exits), ("地标", grid.landmarks)):
@@ -186,6 +200,12 @@ class GameWorld:
                     problems.append(f"房间 {rid!r} 棋盘：{c} 上叠了两样（{placed[c]} 与 {label} {key!r}）")
                 else:
                     placed[c] = f"{label} {key!r}"
+        for p in (getattr(grid, "pois", []) or []):
+            c = tuple(p.cell)
+            if c in placed:
+                problems.append(f"房间 {rid!r} 棋盘：{c} 上叠了两样（{placed[c]} 与 探索点 {p.id!r}）")
+            else:
+                placed[c] = f"探索点 {p.id!r}"
 
         if problems:        # 坐标都没摆对，连通性检查就别跑了（噪声）
             return problems
@@ -227,4 +247,8 @@ class GameWorld:
             for key, c in mapping.items():
                 if tuple(c) not in seen:
                     problems.append(f"房间 {rid!r} 棋盘：{label} {key!r}@{tuple(c)} 从进门处走不到（不可站或被隔断）")
+        # 探索点：要走上去揭示，本格须可站且可达
+        for p in (getattr(grid, "pois", []) or []):
+            if tuple(p.cell) not in seen:
+                problems.append(f"房间 {rid!r} 棋盘：探索点 {p.id!r}@{tuple(p.cell)} 从进门处走不到（不可站或被隔断）")
         return problems

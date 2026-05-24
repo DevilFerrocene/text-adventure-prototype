@@ -463,6 +463,31 @@ class GameState:
 
 
 @dataclass
+class GridPOI:
+    """探索点：棋盘上一个【未探明】的格。明面只有位置 + 一句不剧透的感官提示（hint）；
+    暗面 payload 锁在引擎里——【揭示前永不进 get_scene，GM 看不到是啥】。玩家走到跟前
+    （approach）自动揭示、一次性（置 flag `_poi_<id>` 防重复触发，进存档）。
+
+    这是引擎层强制版的"别替玩家点破出路"：GM 只能照实演"那儿有个没探明的东西"，
+    谜底由引擎在揭示时才吐出来。
+
+    id      — 稳定 id（揭示后置 `_poi_<id>` flag）
+    cell    — (x,y)，玩家可站立、走上去即触发
+    hint    — 明面感官提示（进 get_scene，**不许剧透**），如 "草丛里有什么反着光"
+    payload — 暗面，dict，按 kind 分：
+              {"kind":"loot","items":[{即兴物字段}],"reveal":"叙事文案"}
+              {"kind":"clue","text":"线索文本","reveal":"..."}
+              {"kind":"event","flags":{flag:bool},"reveal":"..."}
+              {"kind":"trap","damage":"1d6","damage_type":"pierce","save_attr":"dex","dc":12,"reveal":"..."}
+              {"kind":"ambush","enemies":["enemy_id"]/improvised,"reveal":"..."}
+    """
+    id: str
+    cell: Tuple[int, int]
+    hint: str
+    payload: dict = field(default_factory=dict)
+
+
+@dataclass
 class RoomGrid:
     """房间的二维棋盘（战棋/早期 RPG 式）。给探索加空间感：物体/陈设/出口都钉在格子上，
     玩家是棋盘上的一枚 token。**引擎独占坐标与寻路**——上层（GM）从不见原始 (x,y)，
@@ -487,6 +512,7 @@ class RoomGrid:
     ambient: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     exits: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     landmarks: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    pois: List["GridPOI"] = field(default_factory=list)   # 探索点（未探明的 ?，见 GridPOI）
 
 
 @dataclass

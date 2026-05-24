@@ -192,6 +192,72 @@ class GridlessBackcompatTest(unittest.TestCase):
         self.assertTrue(m._in_reach(m.SESSION.state, room, (5, 5)))   # 无 grid 恒为真
 
 
+class PointOfInterestTest(unittest.TestCase):
+    """探索点：明面只给 hint、payload 锁在引擎（GM 看不到）；走到跟前自动揭示、一次性。"""
+
+    def setUp(self):
+        self.assertTrue(m.start_game("aincrad")["ok"])
+
+    def tearDown(self):
+        if m.SESSION.in_combat:
+            m.end_combat(reason="t")
+
+    def test_poi_shows_hint_not_payload(self):
+        st = m.SESSION.state
+        st.position = "plains"; st.cell = (2, 3)
+        grid = m.get_scene()["scene"]["grid"]
+        names = {e["name"] for e in grid["around"]}
+        self.assertIn("草叶间半埋着什么，反着一点微光", names)   # 明面 hint 在
+        blob = str(grid)
+        self.assertNotIn("loot", blob)                          # payload 不外泄
+        self.assertNotIn("磨尖的骨刺", blob)                    # 谜底 GM 看不到
+
+    def test_approach_loot_adds_item_and_is_one_shot(self):
+        st = m.SESSION.state
+        st.position = "plains"; st.cell = (2, 3)
+        r = m.approach("微光")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["revealed"]["kind"], "loot")
+        self.assertTrue(any("磨尖" in i.name for i in st.inventory))
+        self.assertTrue(st.flags.get("_poi_plains_glint"))      # 一次性 flag
+        # 揭示后不再出现在场景，也再找不到
+        self.assertFalse(any("微光" in e["name"]
+                             for e in m.get_scene()["scene"]["grid"]["around"]))
+        self.assertFalse(m.approach("微光")["ok"])
+
+    def test_approach_ambush_sets_spawns_and_fightable(self):
+        st = m.SESSION.state
+        st.position = "forest_edge"; st.cell = (2, 2)
+        r = m.approach("兽臊")
+        self.assertEqual(r["revealed"]["kind"], "ambush")
+        self.assertEqual(st.active_spawns, ["gale_wolf"])       # 伏击落到在场敌人
+        self.assertTrue(m.request_combat(reason="应战")["ok"])  # 随后能直接开打
+
+    def test_trap_deals_damage(self):
+        from core.types import GridPOI
+        st = m.SESSION.state
+        room = m.SESSION.world.get_room("plains")
+        room.grid.pois.append(GridPOI(
+            id="t_acid", cell=(0, 4), hint="地上一摊发暗的黏液",
+            payload={"kind": "trap", "damage": "1d4", "damage_type": "acid",
+                     "reveal": "黏液腾起酸雾"}))         # 无 save → 必吃伤害
+        st.position = "plains"; st.cell = (2, 3)
+        hp0 = st.vitals.hp
+        r = m.approach("黏液")
+        self.assertEqual(r["revealed"]["kind"], "trap")
+        self.assertLess(st.vitals.hp, hp0)
+
+    def test_poi_round_trips_one_shot_through_save(self):
+        st = m.SESSION.state
+        st.position = "plains"; st.cell = (2, 3)
+        m.approach("微光")                                       # 揭示 → 置 flag
+        m.save_game("poi_test")
+        m.start_game("aincrad")
+        self.assertFalse(m.SESSION.state.flags.get("_poi_plains_glint"))
+        m.load_game("poi_test")
+        self.assertTrue(m.SESSION.state.flags.get("_poi_plains_glint"))  # 已揭示状态恢复
+
+
 class CellPersistenceTest(unittest.TestCase):
     """move 重置到 entry；存档往返保留 cell。"""
 

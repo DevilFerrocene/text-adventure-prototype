@@ -1,5 +1,5 @@
 """苍穹回廊：房间。"""
-from core.types import Room, RoomGrid
+from core.types import Room, RoomGrid, GridPOI
 
 
 def add_all(world):
@@ -127,6 +127,15 @@ def add_all(world):
                 "尖锐的断枝": (1, 3), "零星的碎石": (4, 4),
             },
             exits={"north": (0, 0), "west": (0, 2), "south": (2, 5)},
+            pois=[
+                GridPOI(id="plains_glint", cell=(4, 5),
+                        hint="草叶间半埋着什么，反着一点微光",
+                        payload={"kind": "loot",
+                                 "items": [{"name": "磨尖的骨刺", "category": "tool",
+                                            "equip_slot": "weapon", "damage_expr": "1d3",
+                                            "damage_type": "pierce"}],
+                                 "reveal": "拨开草——半截磨尖的兽骨，不知谁削的，够当把锥子使。"}),
+            ],
         ),
     ))
 
@@ -162,6 +171,12 @@ def add_all(world):
                 "缠人的藤蔓": (1, 3), "尖头的断木刺": (3, 3),
             },
             exits={"in": (4, 0), "east": (4, 2)},
+            pois=[
+                GridPOI(id="forest_lurk", cell=(3, 2),
+                        hint="前面有什么屏着气，土腥里掺了股兽臊，安静得不像风",
+                        payload={"kind": "ambush", "enemies": ["gale_wolf"],
+                                 "reveal": "树影炸开——一头疾风狼从伏窝里窜出，咬着寒气扑向你！"}),
+            ],
         ),
     ))
     world.add_room(Room(
@@ -227,6 +242,13 @@ def add_all(world):
                 "崩落的廊柱残段": (0, 2), "锈蚀的断剑": (4, 2),
             },
             exits={"north": (0, 0), "south": (2, 4)},
+            pois=[
+                GridPOI(id="laby_tripwire", cell=(3, 2),
+                        hint="半空里一根绷直的细线，齐踝高，几乎看不见",
+                        payload={"kind": "trap", "save_attr": "dex", "dc": 12,
+                                 "damage": "1d6", "damage_type": "pierce",
+                                 "reveal": "你的小腿挂上那根细线——咔哒，墙缝激出一蓬淬黑的飞针！"}),
+            ],
         ),
     ))
 

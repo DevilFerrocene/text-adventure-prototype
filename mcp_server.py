@@ -305,9 +305,17 @@ def _approach_cell(state, room, cell, *, standable_self=False) -> dict:
             "from": _bearing(dest, old) or "原地", "bearing_to": _bearing(dest, tuple(cell))}
 
 
+def _active_pois(state, grid) -> list:
+    """尚未揭示的探索点（揭示后置 `_poi_<id>` flag，一次性、进存档）。"""
+    if not grid:
+        return []
+    return [p for p in grid.pois if not state.flags.get(f"_poi_{p.id}")]
+
+
 def _resolve_grid_target(world, state, room, name: str):
     """把玩家说的名字解析成棋盘实体：返回 (kind, ref, cell, standable_self, display)。
-    搜成型物(名/ id) → 冷物体 → 地标 → 出口（方向或目标房名）。支持部分匹配。找不到返回 None。"""
+    搜成型物(名/ id) → 冷物体 → 地标 → 探索点(hint) → 出口（方向或目标房名）。
+    支持部分匹配。找不到返回 None。"""
     grid = _room_grid(room)
     if not grid or not name:
         return None
@@ -329,6 +337,10 @@ def _resolve_grid_target(world, state, room, name: str):
     for nm, cell in grid.landmarks.items():
         if q == nm or q in nm or nm in q:
             return ("landmark", nm, tuple(cell), True, nm)
+    # 探索点：按 hint 部分匹配（可驻足，走上去即揭示）
+    for p in _active_pois(state, grid):
+        if q == p.hint or q in p.hint or p.hint in q or q == p.id:
+            return ("poi", p.id, tuple(p.cell), True, p.hint)
     # 出口：方向或目标房名
     for direction, cell in grid.exits.items():
         target = room.exits.get(direction, "")
@@ -362,6 +374,9 @@ def _spatial_overview(world, state, room) -> Optional[dict]:
         target = room.exits.get(direction, "")
         troom = world.get_room(target)
         entries.append((f"{troom.name if troom else target}（{direction}）", "出口", tuple(cell)))
+    # 探索点：只给 hint（明面），绝不含 payload——GM 看不到是啥
+    for p in _active_pois(state, grid):
+        entries.append((p.hint, "未探明", tuple(p.cell)))
 
     at_hand, around = [], []
     for nm, cat, cell in entries:
@@ -381,6 +396,64 @@ def _spatial_overview(world, state, room) -> Optional[dict]:
         d = _cheb(pcell, cell)
         locale = f"在{nm}附近" if d <= 1 else f"离{nm}{_proximity_label(d)}（{_bearing(pcell, cell)}向）"
     return {"enabled": True, "player_locale": locale, "at_hand": at_hand, "around": around}
+
+
+def _reveal_poi(world, state, poi) -> dict:
+    """揭示一个探索点：按 payload.kind 结算，置 `_poi_<id>` flag（一次性、进存档），
+    返回给 GM 演的明细（含真身——此刻才第一次把谜底交出来）。"""
+    payload = poi.payload or {}
+    kind = payload.get("kind", "event")
+    state.flags[f"_poi_{poi.id}"] = True
+    out = {"poi_id": poi.id, "kind": kind, "hint": poi.hint, "reveal": payload.get("reveal", "")}
+
+    if kind == "loot":
+        items = [dict(it) for it in payload.get("items", [])]
+        for i, it in enumerate(items):
+            it.setdefault("id", f"imp_poi_{poi.id}_{i}")   # 即兴物 id 须以 imp_ 开头
+        if items:
+            add_improvised(items)
+        out["gained"] = [it.get("name") for it in items]
+        out["inventory"] = _inventory_snapshot(state)
+
+    elif kind == "clue":
+        text = payload.get("text", "")
+        if text:
+            state.add_clue(text, tags=payload.get("tags", []))
+        out["clue"] = text
+
+    elif kind == "event":
+        for f, v in (payload.get("flags", {}) or {}).items():
+            state.flags[f] = v
+        out["flags_set"] = payload.get("flags", {})
+
+    elif kind == "trap":
+        save_attr, dc = payload.get("save_attr"), payload.get("dc")
+        dodged = False
+        if save_attr and dc is not None:
+            roll = random.randint(1, 20) + int(state.vitals.attributes.get(save_attr, 0))
+            dodged = roll >= int(dc)
+            out["save"] = {"attr": save_attr, "dc": dc, "roll": roll, "dodged": dodged}
+        if not dodged:
+            dmg = _roll_damage(payload.get("damage", "1d4"))
+            before = state.vitals.hp
+            state.vitals.hp = max(0, state.vitals.hp - dmg)
+            out["damage"] = {"rolled": dmg, "type": payload.get("damage_type", "blunt"),
+                             "hp_before": before, "hp_after": state.vitals.hp}
+            if state.vitals.hp <= 0:
+                out["respawn"] = _respawn_player(reason=f"踩中陷阱（{poi.hint}）")
+
+    elif kind == "ambush":
+        enemies = payload.get("enemies", [])
+        canon = [e for e in enemies if isinstance(e, str)]
+        improvised = [e for e in enemies if isinstance(e, dict)]
+        if canon:
+            state.active_spawns = list(canon)          # 在场敌人；GM 随后 request_combat() 不带参即打
+            out["ambush"] = {"enemies": canon, "enemy_profiles": _enemy_profiles_for_scene(state)}
+        elif improvised:
+            out["ambush"] = {"improvised": improvised}  # GM: request_combat(improvised=...)
+
+    _autosave()
+    return out
 
 
 def _cell_annotation(state, room, cell) -> Optional[dict]:
@@ -4422,8 +4495,12 @@ def approach(target: str) -> dict:
     引擎只认棋盘坐标并对你隐藏它；你和玩家都只看方位+距离（get_scene 的 scene.grid）。
 
     Args:
-        target: 要靠近的东西的名字——成型物 / 冷物体 / 地标 / 出口（方向或目标房名，支持部分匹配）。
+        target: 要靠近的东西的名字——成型物 / 冷物体 / 地标 / 出口 / **探索点**（取那句感官 hint，支持部分匹配）。
                 取自 get_scene 的 scene.grid.around[].name、at_hand[].name，或 objects/ambient 的名字。
+
+    **探索点（未探明的"?"）**：走到跟前会【自动揭示】——引擎此刻才把谜底交出来，放进返回的
+    `revealed` 字段（可能是战利品/线索/事件/陷阱/伏击）。揭示前你不知道是啥，**别替它脑补内容**；
+    照 `revealed.reveal` + 结果演。若 `revealed.kind=="ambush"`，随后 `request_combat()`（不带参，打在场的）。
     """
     if err := _require_started():
         return err
@@ -4442,16 +4519,23 @@ def approach(target: str) -> dict:
     move_info = _approach_cell(state, room, cell, standable_self=standable_self)
     if not move_info["ok"]:
         return move_info
-    _autosave()
-    return {
+    result = {
         "ok": True,
         "target": display,
         "moved": move_info["moved"],
         "steps": move_info.get("steps", 0),
         "note": (f"你穿过去，走到{display}跟前（{move_info['steps']} 步）。" if move_info["moved"]
                  else f"{display}本就在你手边，没挪窝。"),
-        "scene": _room_snapshot(world, state),
     }
+    # 探索点：走到跟前自动揭示——此刻才把暗面交给 GM
+    if kind == "poi":
+        poi = next((p for p in grid.pois if p.id == ref), None)
+        if poi is not None:
+            result["revealed"] = _reveal_poi(world, state, poi)
+            result["note"] = "你走到那处，凑近一看——"
+    result["scene"] = _room_snapshot(world, state)
+    _autosave()
+    return result
 
 
 def _write_room_snapshot(world: GameWorld, state: GameState, room) -> None:

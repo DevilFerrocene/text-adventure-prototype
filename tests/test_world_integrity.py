@@ -88,6 +88,34 @@ class GridValidatorCatchesTest(unittest.TestCase):
         r.grid = RoomGrid(width=3, height=3, entry=(1, 1), blocked=[(1, 1)])
         self.assertTrue(any("进门落点" in p for p in w.validate()))
 
+    def test_poi_invalid_kind(self):
+        from core.types import RoomGrid, GridPOI
+        w = self._world()
+        r = w.get_room("tavern")
+        r.grid = RoomGrid(width=3, height=3, entry=(0, 0),
+                          pois=[GridPOI(id="bad", cell=(1, 1), hint="嗯？",
+                                        payload={"kind": "nonsense"})])
+        self.assertTrue(any("payload.kind" in p for p in w.validate()))
+
+    def test_poi_ambush_unknown_enemy(self):
+        from core.types import RoomGrid, GridPOI
+        w = self._world()
+        r = w.get_room("tavern")
+        r.grid = RoomGrid(width=3, height=3, entry=(0, 0),
+                          pois=[GridPOI(id="amb", cell=(1, 1), hint="有动静",
+                                        payload={"kind": "ambush", "enemies": ["ghost_wolf"]})])
+        self.assertTrue(any("ghost_wolf" in p for p in w.validate()))
+
+    def test_poi_unreachable(self):
+        from core.types import RoomGrid, GridPOI
+        w = self._world()
+        r = w.get_room("tavern")
+        r.grid = RoomGrid(width=5, height=5, entry=(0, 0),
+                          pois=[GridPOI(id="boxed", cell=(2, 2), hint="?",
+                                        payload={"kind": "clue", "text": "x"})],
+                          blocked=[(1, 1), (2, 1), (3, 1), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)])
+        self.assertTrue(any("boxed" in p and "走不到" in p for p in w.validate()))
+
     def test_entity_walled_off_unreachable(self):
         from core.types import RoomGrid
         w = self._world()

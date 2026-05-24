@@ -148,6 +148,9 @@ body{
 .bcell.b-exit{border-color:var(--cyan);color:var(--cyan)}
 .bcell.b-exit .bn{color:var(--cyan)}
 .bcell.b-ambient{color:var(--fg-mute)}
+.bcell.b-poi{border-color:var(--violet);border-style:dashed;color:var(--violet)}
+.bcell.b-poi .bg{font-weight:700}
+.bcell.b-poi .bn{color:var(--violet);opacity:.85}
 .bcell.blocked{background:repeating-linear-gradient(45deg,var(--line-soft) 0 3px,transparent 3px 7px)}
 .bcell.here{box-shadow:0 0 0 2px var(--amber) inset,0 0 14px oklch(0.82 0.135 75 / .3);z-index:2}
 .bcell .byou{position:absolute;top:2px;right:3px;font-size:9px;background:var(--amber);
@@ -618,7 +621,7 @@ function renderMap(map){
   }).join('');
   wrap.innerHTML = `<svg width="${W}" height="${H}">${lines}</svg>${nodes}`;
 }
-const BOARD_GLYPH = {object:'◈', ambient:'·', landmark:'◇', exit:'⛬'};
+const BOARD_GLYPH = {object:'◈', ambient:'·', landmark:'◇', exit:'⛬', poi:'?'};
 function renderBoard(b){
   if(!b) return '<div class="pempty">这间房没有棋盘布局——满屋皆在手边，随手可取。</div>';
   const at = {};                                   // "x,y" → token
@@ -641,7 +644,7 @@ function renderBoard(b){
   }
   return `<div class="bhint">${esc2(b.room)} · 北↑ · 「你」为当前位置，说"走到XX"即可移动</div>`+
          `<div class="board" style="grid-template-columns:repeat(${b.width},${cs}px)">${cells}</div>`+
-         `<div class="blegend">◈ 物件/人 · ◇ 落脚点 · ⛬ 出口 · · 陈设 · ▓ 障碍</div>`;
+         `<div class="blegend">◈ 物件/人 · ◇ 落脚点 · ⛬ 出口 · ? 未探明 · · 陈设 · ▓ 障碍</div>`;
 }
 // 交互：顶栏 tab / 抽屉内切换 / 关闭 / 快捷键
 document.querySelectorAll('#tabs .tab').forEach(t=>t.onclick=()=>toggleDrawer(t.dataset.tab));

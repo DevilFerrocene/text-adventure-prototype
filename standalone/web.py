@@ -307,6 +307,9 @@ def _board_payload(world, st) -> dict | None:
         troom = world.get_room(target)
         tokens.append({"x": x, "y": y, "name": (troom.name if troom else direction),
                        "dir": direction, "kind": "exit"})
+    # 探索点：未揭示的画成 ?（只给 hint，payload 不外泄）
+    for p in mcp_server._active_pois(st, grid):
+        tokens.append({"x": p.cell[0], "y": p.cell[1], "name": p.hint, "kind": "poi"})
     px, py = st.cell
     return {
         "room": room.name if room else st.position,
