@@ -3,7 +3,7 @@
 一个 **TRPG 文字冒险引擎**：有状态的游戏引擎（房间、物品、骰子、战斗、技能、等级、存档全在这里，确定性、可计算）+ 一个 LLM 当 GM（调用引擎工具、写沉浸式叙事）。
 
 **两种玩法：**
-- **独立运行**（`standalone/`）——自带 LLM + agent loop + 流式 TUI，配好 `.env` 里的 API key 就能在终端单独跑，不依赖任何宿主。
+- **独立运行**（`standalone/`）——自带 LLM + agent loop + Web 富界面（含世界编辑器），配好 `.env` 里的 API key 就能单独跑，不依赖任何宿主。
 - **作为 MCP 后端**——把引擎挂进支持 [MCP](https://modelcontextprotocol.io) 的宿主（Claude Code / Codex），由宿主的 LLM 当 GM。
 
 引擎是同一个；区别只是"谁来当 GM、从哪里玩"。
@@ -26,7 +26,7 @@
 - **技能树**：被动常驻 / 主动施放（消耗 + 冷却）/ 反应触发（被偷袭前自动加感知），XP 成长自动升 rank。
 - **战术战斗（可选）**：硬仗可开战术模式——列阵区位（rank）、武器触及（reach，近战须顶前排/远程点后排）、行动经济（每回合 1 大动 + 1 小动），让近战/远程/走位 build 真正分化，而非脸贴脸互砍。
 - **危机合约**：玩家自选挑战词条强化敌人（敌伤/敌血/敌甲/敌速），引擎吃得住，胜利时经验金币按难度**确定性**放大——难度由玩家作者、强度靠 build 挣、奖励算得清，构成单层的重打循环。
-- **HUD 前台**：引擎吐出权威状态条、骰子卡、场景清单、战斗血条，GM 直接渲染。独立 TUI 里 HUD 常驻顶栏、叙事流式输出。Web 富 UI（`python -m standalone.web`）是**三栏 game-client**：左栏角色状态（HP/SP/属性/金币）+ 位置罗盘与出口 + 会话工具；中栏 GM 叙事流 + 输入（说话/行动/场外）+ 按出口/场景动态生成的常用指令；右栏**场景对象**（按类别筛选，距离用棋盘真值「手边/N 步·方位/房间另一头」）+ 快捷意图 + 环境（天气/时段）。叠加抽屉看板 **背包 / 技能 / 任务 / 地图 / 场地**（I/S/Q/M/B），**场地**把房间二维棋盘画成 token 板（物件/陈设/出口/敌人分色、「你」实时高亮）。
+- **HUD 前台**：引擎吐出权威状态条、骰子卡、场景清单、战斗血条，GM 直接渲染。Web 富 UI（`python -m standalone.web`）是**三栏 game-client**：左栏角色状态（HP/SP/属性/金币）+ 位置罗盘与出口 + 会话工具；中栏 GM 叙事流 + 输入（说话/行动/场外）+ 按出口/场景动态生成的常用指令；右栏**场景对象**（按类别筛选，距离用棋盘真值「手边/N 步·方位/房间另一头」）+ 快捷意图 + 环境（天气/时段）。叠加抽屉看板 **背包 / 技能 / 任务 / 地图 / 场地**（I/S/Q/M/B），**场地**把房间二维棋盘画成 token 板（物件/陈设/出口/敌人分色、「你」实时高亮）。
 - **GM 裁定权**：玩家用了预设之外的创意解法时，GM 可裁定并落到引擎（`gm_set_flag`），世界状态真正认可——不强迫套预设动作。
 - **自动存档 + 会话管理**：每次状态变更静默落盘，进程重启无缝续上。Web 还持久化**对话本身**——刷新/重启连叙事记录一起恢复；顶栏「会话」菜单可**新对话 / 命名存档 / 列表恢复**，随时存多局、切回任意一局。
 - **软重生**：死亡不是 game over——回满血、掉一半金币、被烙印拽回营地水晶。战斗倒下自动触发，探索/叙事死亡 GM 裁定。鼓励 6 血绝境里大胆试错。
@@ -69,14 +69,15 @@ LLM_MODEL=deepseek-chat                    # 你端点上的模型名
 
 ## 怎么玩
 
-### 方式一：独立运行（自带 LLM + 流式 TUI，推荐先试）
+### 方式一：独立运行（自带 LLM + Web 富界面，推荐先试）
 
 配好上面的 `.env` 后：
 
 ```bash
-python -m standalone.tui     # 富界面 TUI：状态栏顶 + 叙事流式 + 输入底
-python -m standalone.cli     # 纯命令行一问一答
-python -m standalone.cli --check   # 不调 LLM 的自检（验证工具桥/配置）
+python -m standalone.web     # Web 富界面（三栏 game-client）→ http://127.0.0.1:8000
+                             #   顶栏「世界编辑器」入口 / 直接访问 /editor 改世界、一键试玩
+python -m standalone.cli     # 纯命令行一问一答（无界面）
+python -m standalone.cli --check   # 不调 LLM 的自检（验证工具桥/配置/世界完整性）
 ```
 
 GM 会带你进入苍穹回廊的营地——6 点血、空着两手、一个铜板都没有。然后用自然语言破局：
@@ -124,7 +125,7 @@ mcp_server.py          # 游戏引擎 + 46 个工具（核心）
 core/types.py          # 数据模型：Modifier/Buff/Skill/RuleBook/Combatant/GameObject…
 runtime/game_world.py  # 世界容器：房间/物体/敌人/技能/规则书注册表
 content/aincrad/       # 示例世界「苍穹回廊」（拆包：canon/enemies/skills/rooms/objects/state）
-standalone/            # 独立运行层：config / tools(工具桥) / agent(loop) / prompt / tui / cli
+standalone/            # 独立运行层：config / tools(工具桥) / agent(loop) / prompt / web(+编辑器) / cli
 .claude/skills/play/   # GM skill（导演 prompt，与 .agents/ 同步）
 .agents/skills/play/
 tests/                 # 411 个回归测试

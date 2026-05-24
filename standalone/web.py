@@ -1,9 +1,10 @@
 """Web 前端后端（FastAPI + SSE）：把 agent loop 推流给浏览器。
 
 运行：python -m standalone.web   （默认 http://127.0.0.1:8000）
-- GET  /         单文件 HTML 前端（仿-TUI 视觉）
+- GET  /         单文件 HTML 前端（三栏 game-client）
 - GET  /state    结构化状态（状态条用，去-CoC 动态属性）
 - POST /turn     {input, mode} → SSE 流（event: delta/tool/final/hud）
+- GET  /editor   世界编辑器（全实体表单 CRUD + 棋盘可视化编辑）
 
 设计：单会话（SESSION 是引擎全局单例），回合用锁串行化——MVP 不支持并发多人。
 sync 生成器交给 StreamingResponse，Starlette 自动在线程池迭代，不阻塞事件循环。

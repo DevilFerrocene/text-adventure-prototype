@@ -1,4 +1,4 @@
-"""无界面 CLI：验证 agent loop 跑得通。TUI 之前的最小可玩入口。
+"""无界面 CLI：自检 + 命令行一问一答，验证 agent loop 跑得通（富界面见 standalone.web）。
 
 用法：
     python -m standalone.cli          # 开一局，命令行一问一答

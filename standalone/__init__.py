@@ -6,7 +6,8 @@
   tools   —— 工具桥：从引擎自己的 FastMCP 注册表生成 tool spec + 进程内派发
   prompt  —— 把 play/SKILL.md 当 system prompt
   agent   —— agent loop：LLM ↔ 工具 ↔ 引擎，跑完一个玩家回合
-  cli     —— 无界面入口（验证 loop）；tui 后续
+  web     —— Web 前端后端（三栏 game-client + 世界编辑器，FastAPI + SSE）
+  cli     —— 无界面入口（自检 / 命令行一问一答，验证 loop）
 
 引擎（mcp_server）是纯 Python，直接 import 当库调，不走 MCP 协议——单进程红利。
 """
