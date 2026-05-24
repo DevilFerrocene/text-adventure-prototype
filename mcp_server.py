@@ -4903,6 +4903,45 @@ def approach(target: str) -> dict:
     return result
 
 
+def goto_cell(x: int, y: int) -> dict:
+    """走到棋盘指定格 (x,y)——【前端点击空地走位专用，不是 GM 工具】。
+    坐标只在引擎内用，绝不进 GM 的工具集（保持 GM 不见坐标）。寻路到位后照常触发
+    探索点揭示 / 敌人视野进战，结果回给前端渲染（叙事由前端就地贴，不走 LLM）。"""
+    if err := _require_started():
+        return err
+    if SESSION.in_combat:
+        return {"ok": False, "error": "战斗中走位请用 declare_intent move。"}
+    world, state = SESSION.world, SESSION.state
+    room = world.get_room(state.position)
+    grid = _room_grid(room)
+    if not grid:
+        return {"ok": False, "error": "这间房没有棋盘。"}
+    cell = (int(x), int(y))
+    if not (0 <= cell[0] < grid.width and 0 <= cell[1] < grid.height):
+        return {"ok": False, "error": "格子越界。"}
+    if not _grid_standable(grid, cell, _grid_occupied(grid)):
+        return {"ok": False, "error": "那格站不住（被占或是障碍）。"}
+    steps = _grid_pathfind(grid, tuple(state.cell), {cell})
+    if steps is None:
+        return {"ok": False, "error": "中间隔着障碍，过不去。"}
+    state.cell = cell
+    result = {"ok": True, "moved": steps > 0, "steps": steps,
+              "note": f"你穿过去，走到那处（{steps} 步）。" if steps > 0 else "你已经站在那儿。"}
+    # 落在探索点上 → 揭示（同 approach）
+    poi = next((p for p in _active_pois(state, grid) if tuple(p.cell) == cell), None)
+    if poi:
+        result["revealed"] = _reveal_poi(world, state, poi)
+    # 踏进敌人视野 → 自动进战
+    if not SESSION.in_combat:
+        spotted = _check_enemy_vision(world, state, room)
+        if spotted:
+            rc = request_combat(reason=f"你刚挪过去，{'、'.join(spotted)}发现了你")
+            result["spotted"], result["combat"] = spotted, rc
+    result["scene"] = _room_snapshot(world, state)
+    _autosave()
+    return result
+
+
 def _write_room_snapshot(world: GameWorld, state: GameState, room) -> None:
     """离开房间时写入快照：保存当前房间的物体清单和相关 flags。"""
     objects_state = {}

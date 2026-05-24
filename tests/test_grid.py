@@ -455,6 +455,45 @@ class GridCombatTest(unittest.TestCase):
         self.assertTrue(s["suggested_target"].startswith("away:"))
 
 
+class GotoCellTest(unittest.TestCase):
+    """点击空格走位：goto_cell 引擎寻路到指定格（前端用，不经 GM、不泄坐标）。"""
+
+    def setUp(self):
+        self.assertTrue(m.start_game("aincrad")["ok"])
+        m.SESSION.state.position = "plains"
+        m.SESSION.state.cell = (2, 3)
+
+    def tearDown(self):
+        if m.SESSION.in_combat:
+            m.end_combat(reason="t")
+
+    def test_moves_to_empty_standable_cell(self):
+        grid = m.SESSION.world.get_room("plains").grid
+        occ = m._grid_occupied(grid)
+        target = next((x, y) for x in range(grid.width) for y in range(grid.height)
+                      if m._grid_standable(grid, (x, y), occ) and (x, y) != (2, 3))
+        r = m.goto_cell(*target)
+        self.assertTrue(r["ok"])
+        self.assertEqual(tuple(m.SESSION.state.cell), target)
+
+    def test_rejects_out_of_bounds(self):
+        self.assertFalse(m.goto_cell(99, 99)["ok"])
+
+    def test_rejects_occupied_cell(self):
+        # field_chest 在 (2,4)，被占 → 站不住
+        self.assertFalse(m.goto_cell(2, 4)["ok"])
+
+    def test_rejects_in_gridless_room(self):
+        m.SESSION.state.position = "floor_2_gate"
+        self.assertFalse(m.goto_cell(0, 0)["ok"])
+
+    def test_landing_on_poi_reveals_it(self):
+        m.SESSION.state.cell = (3, 5)
+        r = m.goto_cell(4, 5)                 # 草原探索点 plains_glint @ (4,5)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["revealed"]["kind"], "loot")
+
+
 class CellPersistenceTest(unittest.TestCase):
     """move 重置到 entry；存档往返保留 cell。"""
 

@@ -364,6 +364,8 @@ body{ display:block; align-items:stretch; height:100vh; overflow:hidden; }
 .bcell[data-tip]{cursor:help}
 .bcell[data-move]{cursor:pointer}
 .bcell[data-move]:hover{box-shadow:0 0 0 2px var(--amber) inset}
+.bcell[data-cell]{cursor:pointer}
+.bcell[data-cell]:hover{box-shadow:0 0 0 2px var(--fg-mute) inset;background:var(--panel)}
 #board-tip{position:fixed;z-index:60;pointer-events:none;display:none;background:var(--bg-soft);
   border:1px solid var(--line);border-radius:9px;padding:7px 11px;max-width:214px;
   box-shadow:0 10px 28px oklch(0.1 0.01 55 / .55)}
@@ -726,13 +728,31 @@ $('#sesstools').onclick=e=>{
 };
 renderQuickIntents();
 
-// ── 点击棋盘格 → 命令 GM 移动过去（侧栏 + 抽屉共用）──
+// ── 点击棋盘格（侧栏 + 抽屉共用）──
+// 有名实体 → 发无坐标 NL 指令给 GM（走到X/向X走/走向敌）；空地 → /move_cell 引擎直走（不经 GM）
 document.addEventListener('click',e=>{
-  const c=e.target.closest('.bcell[data-move]'); if(!c) return;
+  const named=e.target.closest('.bcell[data-move]');
+  if(named && !busy){ if(boardTip) boardTip.style.display='none'; sendTurn(named.dataset.move); return; }
+  const cell=e.target.closest('.bcell[data-cell]');
+  if(cell && !busy){ const [x,y]=cell.dataset.cell.split(',').map(Number); moveToCell(x,y); }
+});
+async function moveToCell(x,y){
   if(busy) return;
   if(boardTip) boardTip.style.display='none';
-  sendTurn(c.dataset.move);
-});
+  try{
+    const r=await (await fetch('/move_cell',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({x,y})})).json();
+    if(!r.ok){ addSystem('✗ '+(r.error||'走不过去'),'fail'); return; }
+    if(r.note) addSystem(r.note,'');
+    if(r.hud) renderHud(r.hud);
+    if(r.panels){ window.PANELS=r.panels; renderLocation(r.panels); renderSceneObjects(r.panels);
+      renderEnvironment(r.panels); renderQuickCmds(r.panels);
+      if(drawerTab && $('#drawer').classList.contains('open')) renderDrawer(drawerTab); }
+    if(r.revealed){ addSystem('✦ '+(r.revealed.reveal||'你有所发现'),'');
+      if(r.revealed.kind==='ambush') addSystem('⚠ 伏击！输入你的应对。','fail'); }
+    if(r.spotted) addSystem('⚠ '+r.spotted.join('、')+' 发现了你——输入你的应对。','fail');
+  }catch(e){ addSystem('✗ 移动失败：'+e,'fail'); }
+}
 // ── 棋盘格悬停提示（侧栏 + 抽屉两块棋盘共用）──
 let boardTip=null;
 document.addEventListener('mousemove',e=>{
@@ -881,30 +901,33 @@ function renderBoard(b, avail=320, compact=false){
       const g = t ? `<span class="bg">${BOARD_GLYPH[t.kind]||'·'}</span>` : '';
       const nm = (t && (!compact || cs>=40)) ? `<span class="bn">${esc2(t.name)}</span>` : '';
       const you = here ? '<span class="byou">你</span>' : '';
-      // 悬停提示：名字 + 类别 + 距离·方位（空格不挂）
+      const emptyWalkable = !t && !here && !blocked.has(key);   // 可走过去的空格
+      // 悬停提示：名字 + 类别 + 距离·方位（空地也给提示）
       let tip='';
-      if(t || here){
-        const nmText = t ? t.name : '你';
-        let sub;
-        if(here && t) sub = '你在此 · ' + (KIND_TIP[t.kind]||'');
-        else if(here) sub = '当前位置';
+      if(t || here || emptyWalkable){
+        let nmText, sub;
+        if(here){ nmText='你'; sub = t ? ('你在此 · '+(KIND_TIP[t.kind]||'')) : '当前位置'; }
         else{
           const bear=cellBearing(px,py,x,y), dist=cellDist(px,py,x,y);
-          const label = t.kind==='enemy' ? ('敌 · '+(t.state==='hostile'?'已锁定':'未察觉'))
-                                          : (KIND_TIP[t.kind]||'');
-          sub = (label?label+' · ':'') + dist + (bear?' · '+bear:'');
+          if(t){ nmText=t.name;
+            const label = t.kind==='enemy' ? ('敌 · '+(t.state==='hostile'?'已锁定':'未察觉'))
+                                            : (KIND_TIP[t.kind]||'');
+            sub = (label?label+' · ':'') + dist + (bear?' · '+bear:''); }
+          else{ nmText='空地'; sub='走到这里 · '+dist+(bear?' · '+bear:''); }
         }
         tip = ` data-tip="${esc2(nmText)}|${esc2(sub)}"`;
       }
-      // 点击该格 → 命令 GM 移动过去（出口=离开/物体=走到/敌人=逼近；空格与玩家自身不可点）
-      let mv='';
+      // 点击：有名实体→命令 GM 走过去（无坐标 NL）；空地→坐标直走(/move_cell，不经 GM)
+      let act='';
       if(t && !here){
         const cmd = t.kind==='exit' ? `向${DIR_CN[t.dir]||t.dir}走`
                   : t.kind==='enemy' ? `走向${t.name}`
                   : `走到${t.name}`;
-        mv = ` data-move="${esc2(cmd)}"`;
+        act = ` data-move="${esc2(cmd)}"`;
+      }else if(emptyWalkable){
+        act = ` data-cell="${x},${y}"`;
       }
-      cells += `<div class="${cls.join(' ')}"${tip}${mv} style="width:${cs}px;height:${cs}px">${g}${nm}${you}</div>`;
+      cells += `<div class="${cls.join(' ')}"${tip}${act} style="width:${cs}px;height:${cs}px">${g}${nm}${you}</div>`;
     }
   }
   const hint = compact ? `${esc2(b.room)} · 北↑`

@@ -465,6 +465,18 @@ def panels() -> JSONResponse:
     return JSONResponse(panels_payload())
 
 
+@app.post("/move_cell")
+async def move_cell(request: Request) -> JSONResponse:
+    """前端点击棋盘空格走位：引擎直接寻路移动（不走 GM、不泄坐标）。
+    回传移动结果 + 揭示/进战信息 + 刷新后的 hud/panels，供前端就地渲染。"""
+    body = await request.json()
+    res = mcp_server.goto_cell(int(body.get("x", -1)), int(body.get("y", -1)))
+    if res.get("ok"):
+        res["hud"] = hud_payload()
+        res["panels"] = panels_payload()
+    return JSONResponse(res)
+
+
 @app.post("/turn")
 async def turn(request: Request) -> StreamingResponse:
     body = await request.json()
