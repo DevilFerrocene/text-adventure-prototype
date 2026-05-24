@@ -142,6 +142,9 @@ body{
 .bcell .bg{font-size:13px;line-height:1}
 .bcell .bn{font-size:9px;line-height:1.05;max-width:100%;padding:0 2px;
   word-break:break-all;color:var(--fg-dim)}
+/* 窄棋盘（侧栏）：缩字号 + 限两行，名字塞得下不溢出 */
+.board.compact .bcell .bg{font-size:11px}
+.board.compact .bcell .bn{font-size:7.5px;line-height:1.05;max-height:17px;overflow:hidden}
 .bcell.b-object{border-color:var(--amber);color:var(--amber)}
 .bcell.b-object .bn{color:var(--fg)}
 .bcell.b-landmark{border-style:dashed;border-color:var(--fg-mute)}
@@ -921,7 +924,10 @@ function renderBoard(b, avail=320, compact=false){
       const cls=['bcell']; if(t) cls.push('b-'+t.kind); if(t&&t.kind==='enemy') cls.push('b-enemy-'+(t.state||'idle')); if(blocked.has(key)) cls.push('blocked');
       if(here) cls.push('here');
       const g = t ? `<span class="bg">${BOARD_GLYPH[t.kind]||'·'}</span>` : '';
-      const nm = (t && (!compact || cs>=40)) ? `<span class="bn">${esc2(t.name)}</span>` : '';
+      // 物品名一律显示；窄棋盘(compact)里长名截断，悬停看全名
+      let dname = t ? t.name : '';
+      if(t && compact && dname.length>5) dname = dname.slice(0,4)+'…';
+      const nm = t ? `<span class="bn">${esc2(dname)}</span>` : '';
       const you = here ? '<span class="byou">你</span>' : '';
       const emptyWalkable = !t && !here && !blocked.has(key);   // 可走过去的空格
       // 悬停提示：名字 + 类别 + 距离·方位（空地也给提示）
@@ -957,7 +963,7 @@ function renderBoard(b, avail=320, compact=false){
   const legend = compact ? '' :
     `<div class="blegend">◈ 物件/人 · ☠ 敌(黄=未察觉/红=已锁定) · ? 未探明 · ⛬ 出口 · ◇ 落脚点 · ▓ 障碍</div>`;
   return `<div class="bhint">${hint}</div>`+
-         `<div class="board" style="grid-template-columns:repeat(${b.width},${cs}px)">${cells}</div>`+legend;
+         `<div class="board${compact?' compact':''}" style="grid-template-columns:repeat(${b.width},${cs}px)">${cells}</div>`+legend;
 }
 // 交互：顶栏 tab / 抽屉内切换 / 关闭 / 快捷键
 document.querySelectorAll('#tabs .tab').forEach(t=>t.onclick=()=>toggleDrawer(t.dataset.tab));
