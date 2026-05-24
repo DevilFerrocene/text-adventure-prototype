@@ -129,10 +129,33 @@ class PanelsPayloadTest(unittest.TestCase):
     def test_all_sections_present(self):
         p = panels_payload()
         self.assertTrue(p["started"])
-        for k in ("inventory", "skills", "quests", "map"):
+        for k in ("inventory", "skills", "quests", "map", "board"):
             self.assertIn(k, p)
         self.assertIsInstance(p["inventory"], list)   # 冷开局空背包
         self.assertGreaterEqual(len(p["quests"]), 1)  # 开场任务「破局」在
+
+    def test_board_none_in_gridless_room(self):
+        # 营地无 grid → board=None（前端据此显示"满屋皆在手边"）
+        self.assertIsNone(panels_payload()["board"])
+
+    def test_board_payload_in_gridded_room(self):
+        # 进酒馆（有 5×5 棋盘）→ board 带尺寸/玩家格/实体 token（含真坐标，仅供 UI 画图）
+        mcp_server.move("east")
+        b = panels_payload()["board"]
+        self.assertIsNotNone(b)
+        self.assertEqual((b["width"], b["height"]), (5, 5))
+        self.assertEqual(tuple(b["player"].values()), (0, 2))   # 进门落点
+        kinds = {t["kind"] for t in b["tokens"]}
+        self.assertEqual(kinds, {"object", "ambient", "landmark", "exit"})
+        names = {t["name"] for t in b["tokens"]}
+        self.assertTrue(any("老板" in n for n in names))         # 成型物在场
+        self.assertTrue(any("酒瓶" in n for n in names))         # 冷物体在场
+
+    def test_board_player_follows_approach(self):
+        mcp_server.move("east")
+        mcp_server.approach("吧台")                              # 走到地标 (3,1)
+        b = panels_payload()["board"]
+        self.assertEqual(tuple(b["player"].values()), (3, 1))   # 棋盘随走位更新
 
     def test_map_current_room_and_floor_scope(self):
         p = panels_payload()

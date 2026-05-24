@@ -133,6 +133,27 @@ body{
   border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center}
 .maplegend{font-family:var(--mono);font-size:10px;color:var(--fg-mute);text-align:center;margin-top:14px;line-height:1.8}
 
+/* ── 房间二维棋盘（场地）── */
+.bhint{font-family:var(--mono);font-size:10.5px;color:var(--fg-mute);text-align:center;margin-bottom:12px;line-height:1.7}
+.board{display:grid;gap:4px;justify-content:center;margin:0 auto}
+.bcell{border:1px solid var(--line-soft);border-radius:6px;background:var(--bg-soft);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  position:relative;overflow:hidden;text-align:center;color:var(--fg-mute)}
+.bcell .bg{font-size:13px;line-height:1}
+.bcell .bn{font-size:9px;line-height:1.05;max-width:100%;padding:0 2px;
+  word-break:break-all;color:var(--fg-dim)}
+.bcell.b-object{border-color:var(--amber);color:var(--amber)}
+.bcell.b-object .bn{color:var(--fg)}
+.bcell.b-landmark{border-style:dashed;border-color:var(--fg-mute)}
+.bcell.b-exit{border-color:var(--cyan);color:var(--cyan)}
+.bcell.b-exit .bn{color:var(--cyan)}
+.bcell.b-ambient{color:var(--fg-mute)}
+.bcell.blocked{background:repeating-linear-gradient(45deg,var(--line-soft) 0 3px,transparent 3px 7px)}
+.bcell.here{box-shadow:0 0 0 2px var(--amber) inset,0 0 14px oklch(0.82 0.135 75 / .3);z-index:2}
+.bcell .byou{position:absolute;top:2px;right:3px;font-size:9px;background:var(--amber);
+  color:var(--bg);border-radius:3px;padding:0 3px;font-family:var(--mono)}
+.blegend{font-family:var(--mono);font-size:10px;color:var(--fg-mute);text-align:center;margin-top:14px;line-height:1.9}
+
 /* ── 会话菜单（顶栏右侧）── */
 #topbar{position:relative}
 #sessbtn{cursor:pointer;color:var(--fg-dim);padding:2px 9px;border:1px solid var(--line);
@@ -261,6 +282,7 @@ body{
       <div class="tab" data-tab="skills"><span>技能</span><span class="badge">S</span></div>
       <div class="tab" data-tab="quest"><span>任务</span><span class="badge">Q</span></div>
       <div class="tab" data-tab="map"><span>地图</span><span class="badge">M</span></div>
+      <div class="tab" data-tab="board"><span>场地</span><span class="badge">B</span></div>
     </div>
   </div>
 
@@ -292,6 +314,7 @@ body{
       <span class="ds" data-tab="skills">技能</span>
       <span class="ds" data-tab="quest">任务</span>
       <span class="ds" data-tab="map">地图</span>
+      <span class="ds" data-tab="board">场地</span>
     </div>
     <div id="dbody"></div>
   </aside>
@@ -489,7 +512,7 @@ $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault
 
 // ── 侧栏面板：背包 / 技能 / 任务 / 地图（只读看板）──
 const esc2 = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const TITLES = {inventory:'背包', skills:'技能', quest:'任务', map:'地图'};
+const TITLES = {inventory:'背包', skills:'技能', quest:'任务', map:'地图', board:'场地'};
 const SKILL_KIND = {passive:'被动常驻', active:'主动施放', reactive:'反应触发'};
 let drawerTab = null;
 
@@ -525,6 +548,7 @@ function renderDrawer(tab){
     body.innerHTML = '<div id="mapwrap"></div><div class="maplegend">◆ 当前位置 · 绿框=安全区 · 虚线框=未探明 · 红虚线=锁住的路</div>';
     renderMap(P.map);
   }
+  else if(tab==='board') body.innerHTML = renderBoard(P.board);
 }
 function renderInventory(inv){
   if(!inv || !inv.length) return '<div class="pempty">空空如也——背包里什么都没有</div>';
@@ -594,6 +618,31 @@ function renderMap(map){
   }).join('');
   wrap.innerHTML = `<svg width="${W}" height="${H}">${lines}</svg>${nodes}`;
 }
+const BOARD_GLYPH = {object:'◈', ambient:'·', landmark:'◇', exit:'⛬'};
+function renderBoard(b){
+  if(!b) return '<div class="pempty">这间房没有棋盘布局——满屋皆在手边，随手可取。</div>';
+  const at = {};                                   // "x,y" → token
+  (b.tokens||[]).forEach(t=>{ at[t.x+','+t.y]=t; });
+  const blocked = new Set((b.blocked||[]).map(c=>c[0]+','+c[1]));
+  const px=b.player.x, py=b.player.y;
+  // 单元尺寸：随宽度自适应，尽量塞进抽屉（约 320px 可用）
+  const cs = Math.max(46, Math.min(64, Math.floor(320 / b.width)));
+  let cells='';
+  for(let y=0; y<b.height; y++){
+    for(let x=0; x<b.width; x++){
+      const key=x+','+y, t=at[key], here=(x===px&&y===py);
+      const cls=['bcell']; if(t) cls.push('b-'+t.kind); if(blocked.has(key)) cls.push('blocked');
+      if(here) cls.push('here');
+      const g = t ? `<span class="bg">${BOARD_GLYPH[t.kind]||'·'}</span>` : '';
+      const nm = t ? `<span class="bn">${esc2(t.name)}</span>` : '';
+      const you = here ? '<span class="byou">你</span>' : '';
+      cells += `<div class="${cls.join(' ')}" style="width:${cs}px;height:${cs}px">${g}${nm}${you}</div>`;
+    }
+  }
+  return `<div class="bhint">${esc2(b.room)} · 北↑ · 「你」为当前位置，说"走到XX"即可移动</div>`+
+         `<div class="board" style="grid-template-columns:repeat(${b.width},${cs}px)">${cells}</div>`+
+         `<div class="blegend">◈ 物件/人 · ◇ 落脚点 · ⛬ 出口 · · 陈设 · ▓ 障碍</div>`;
+}
 // 交互：顶栏 tab / 抽屉内切换 / 关闭 / 快捷键
 document.querySelectorAll('#tabs .tab').forEach(t=>t.onclick=()=>toggleDrawer(t.dataset.tab));
 document.querySelectorAll('#dswitch .ds').forEach(d=>d.onclick=()=>openDrawer(d.dataset.tab));
@@ -602,7 +651,7 @@ $('#drawer-scrim').onclick=closeDrawer;
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){ closeDrawer(); return; }
   if(e.target && e.target.id==='input') return;     // 正在输入时不抢字母快捷键
-  const m={i:'inventory',s:'skills',q:'quest',m:'map'}[e.key.toLowerCase()];
+  const m={i:'inventory',s:'skills',q:'quest',m:'map',b:'board'}[e.key.toLowerCase()];
   if(m){ e.preventDefault(); toggleDrawer(m); }
 });
 

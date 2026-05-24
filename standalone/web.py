@@ -283,8 +283,42 @@ def hud_payload() -> dict:
     }
 
 
+def _board_payload(world, st) -> dict | None:
+    """房间二维棋盘的渲染数据（仅供前端 UI 画图——这是宿主界面，不是 LLM，可用真坐标）。
+    没挂 grid 的房间返回 None。"""
+    room = world.get_room(st.position)
+    grid = getattr(room, "grid", None) if room else None
+    if not grid:
+        return None
+    tokens = []
+    for oid, (x, y) in grid.objects.items():
+        obj = world.get_object(oid)
+        if not obj or obj.hidden:
+            continue
+        if obj.hidden_when_flag and st.flags.get(obj.hidden_when_flag):
+            continue
+        tokens.append({"x": x, "y": y, "name": obj.name, "kind": "object"})
+    for nm, (x, y) in grid.ambient.items():
+        tokens.append({"x": x, "y": y, "name": nm, "kind": "ambient"})
+    for nm, (x, y) in grid.landmarks.items():
+        tokens.append({"x": x, "y": y, "name": nm, "kind": "landmark"})
+    for direction, (x, y) in grid.exits.items():
+        target = room.exits.get(direction, "")
+        troom = world.get_room(target)
+        tokens.append({"x": x, "y": y, "name": (troom.name if troom else direction),
+                       "dir": direction, "kind": "exit"})
+    px, py = st.cell
+    return {
+        "room": room.name if room else st.position,
+        "width": grid.width, "height": grid.height,
+        "player": {"x": px, "y": py},
+        "blocked": [list(b) for b in grid.blocked],
+        "tokens": tokens,
+    }
+
+
 def panels_payload() -> dict:
-    """侧栏面板数据：背包 / 技能 / 任务 / 地图。只读看板，每回合刷新。"""
+    """侧栏面板数据：背包 / 技能 / 任务 / 地图 / 场地（棋盘）。只读看板，每回合刷新。"""
     s = mcp_server.SESSION
     if not s.started:
         return {"started": False}
@@ -333,7 +367,8 @@ def panels_payload() -> dict:
             "safe": ("safe_zone" in room.tags) or ("no_combat" in room.tags),
         })
     return {"started": True, "inventory": inventory, "skills": skills,
-            "quests": quests, "map": {"rooms": rooms, "area": area}}
+            "quests": quests, "map": {"rooms": rooms, "area": area},
+            "board": _board_payload(s.world, st)}
 
 
 _MODE_PREFIX = {
