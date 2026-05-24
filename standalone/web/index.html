@@ -133,6 +133,23 @@ body{
   border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center}
 .maplegend{font-family:var(--mono);font-size:10px;color:var(--fg-mute);text-align:center;margin-top:14px;line-height:1.8}
 
+/* ── 会话菜单（顶栏右侧）── */
+#topbar{position:relative}
+#sessbtn{cursor:pointer;color:var(--fg-dim);padding:2px 9px;border:1px solid var(--line);
+  border-radius:4px;margin-left:14px;transition:color .2s,border-color .2s}
+#sessbtn:hover{color:var(--fg);border-color:var(--fg-mute)}
+#sessmenu{position:absolute;top:40px;right:0;min-width:248px;background:var(--bg-soft);
+  border:1px solid var(--line);border-radius:8px;padding:6px;z-index:45;display:none;
+  box-shadow:0 14px 44px oklch(0.1 0.01 55 / .55)}
+#sessmenu.open{display:block}
+#sessmenu .mi{padding:8px 10px;border-radius:5px;cursor:pointer;font-family:var(--sans);
+  font-size:13px;color:var(--fg-dim);display:flex;gap:8px;align-items:baseline}
+#sessmenu .mi:hover{background:var(--panel);color:var(--fg)}
+#sessmenu .mi .meta{font-family:var(--mono);font-size:10px;color:var(--fg-mute);margin-left:auto;white-space:nowrap}
+#sessmenu .sep{height:1px;background:var(--line-soft);margin:6px 4px}
+#sessmenu .mh{font-family:var(--mono);font-size:10px;letter-spacing:.15em;color:var(--fg-mute);padding:4px 10px}
+#sessmenu .mempty{color:var(--fg-mute);font-size:12px;padding:8px 10px;font-family:var(--mono)}
+
 /* ── 主舞台 ── */
 #stage-wrap{flex:1 1 auto; min-height:0; padding:14px 22px; overflow:hidden; display:flex; flex-direction:column}
 #stage-head{
@@ -232,7 +249,9 @@ body{
     <span class="mono" id="session-id">SESSION · ····</span>
     <span class="mono" id="topbar-world">—</span>
     <span class="sp"></span>
-    <span class="mono">I 背包 · M 地图 · Q 任务 · ↵ 提交</span>
+    <span class="mono">I·S·Q·M 面板 · ↵ 提交</span>
+    <span class="mono" id="sessbtn">会话 ▾</span>
+    <div id="sessmenu"></div>
   </div>
 
   <div id="statusbar">
@@ -590,16 +609,78 @@ function closeSpectacle(){ $('#spectacle').classList.remove('show'); }
 $('#spectacle').onclick=closeSpectacle;
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSpectacle(); });
 
+// ── 会话管理（新对话 / 保存 / 列表恢复，全前端操作）──
+function renderTranscript(list){
+  stage.innerHTML='';
+  (list||[]).forEach(m=>{
+    if(m.role==='player') addPlayer(m.text);
+    else { const g=newGM(); g.classList.remove('cursor'); g.dataset.raw=m.text; g.innerHTML=mdToHtml(m.text); }
+  });
+  scrollEnd();
+}
+function closeSessionMenu(){ $('#sessmenu').classList.remove('open'); }
+async function openSessionMenu(){
+  const menu=$('#sessmenu');
+  if(menu.classList.contains('open')){ closeSessionMenu(); return; }
+  let sessions=[];
+  try{ sessions=((await (await fetch('/session/list')).json()).sessions)||[]; }catch(e){}
+  let html='<div class="mi" data-act="new">＋ 新对话</div>'+
+           '<div class="mi" data-act="save">💾 保存当前会话</div>'+
+           '<div class="sep"></div><div class="mh">已存会话</div>';
+  html += sessions.length
+    ? sessions.map(s=>`<div class="mi" data-act="resume" data-id="${esc2(s.id)}">`+
+        `<span>${esc2(s.title)}</span><span class="meta">第${s.turn}回合 · ${esc2(s.updated)}</span></div>`).join('')
+    : '<div class="mempty">（还没有存档）</div>';
+  menu.innerHTML=html; menu.classList.add('open');
+}
+async function newSession(){
+  closeSessionMenu();
+  if(!confirm('开始新对话？当前未保存的进度会被清掉。')) return;
+  await fetch('/session/new',{method:'POST'});
+  stage.innerHTML=''; window.PANELS=null; closeDrawer();
+  sendTurn('');                 // GM 干净起手开局
+}
+async function saveSession(){
+  closeSessionMenu();
+  const title=prompt('给这个存档起个名字：','');
+  if(title===null) return;
+  try{
+    const r=await (await fetch('/session/save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({title})})).json();
+    addSystem(r.ok?('已保存会话：'+(r.title||r.id)):('保存失败：'+(r.error||'')), r.ok?'':'fail');
+  }catch(e){ addSystem('保存失败：'+e,'fail'); }
+}
+async function resumeSession(id){
+  closeSessionMenu();
+  try{
+    const r=await (await fetch('/session/resume',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id})})).json();
+    if(!r.ok){ addSystem('恢复失败：'+(r.error||''),'fail'); return; }
+    renderTranscript(r.transcript); renderHud(r.hud); loadPanels();
+    addSystem('已恢复会话——继续输入你的行动。','');
+  }catch(e){ addSystem('恢复失败：'+e,'fail'); }
+}
+$('#sessbtn').onclick=(e)=>{ e.stopPropagation(); openSessionMenu(); };
+$('#sessmenu').onclick=(e)=>{
+  const mi=e.target.closest('.mi'); if(!mi) return;
+  const act=mi.dataset.act;
+  if(act==='new') newSession();
+  else if(act==='save') saveSession();
+  else if(act==='resume') resumeSession(mi.dataset.id);
+};
+document.addEventListener('click',closeSessionMenu);   // 点空白处关菜单
+
 // ── 开局 / 刷新恢复 ──
-// 只在【全新会话】才发空开局回合；刷新一个进行中的会话时直接恢复状态，
+// 只在【全新会话】才发空开局回合；进行中的会话(刷新/重启)恢复状态 + 叙事流，
 // 不再重发空回合（否则在已有历史上"空续写"会让思考模型 400、把会话搞挂）。
 $('#session-id').textContent='SESSION · '+Math.floor(Math.random()*9000+1000);
 async function bootstrap(){
   try{
-    const s = await (await fetch('/state')).json();
-    if(s && s.started){
-      renderHud(s); loadPanels();
-      addSystem('会话进行中已恢复——状态见上方与侧栏；直接输入你的行动继续。','');
+    const r = await (await fetch('/session/current')).json();
+    if(r && r.started){
+      if(r.transcript && r.transcript.length) renderTranscript(r.transcript);
+      renderHud(r.hud); loadPanels();
+      addSystem('会话已恢复——直接输入你的行动继续。','');
       return;
     }
   }catch(e){}

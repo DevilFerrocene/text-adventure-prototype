@@ -1,4 +1,5 @@
 """Web 富 UI：从工具结果抽结构面板 + 散文模式提示词。"""
+import json
 import unittest
 
 import mcp_server
@@ -159,6 +160,57 @@ class PanelsPayloadTest(unittest.TestCase):
         self.assertTrue(any("武器" in c for c in stick["capabilities"]))
         skill_ids = [s["id"] for s in p["skills"]]
         self.assertIn("keen_senses", skill_ids)
+
+
+class SessionPersistenceTest(unittest.TestCase):
+    """会话持久化：对话存/取、叙事流抽取、命名快照列表。"""
+
+    def setUp(self):
+        import standalone.web as web
+        self.web = web
+        mcp_server.start_game("aincrad")
+        web._agent = None                      # 强制重建一个干净 agent
+        a = web._get_agent()
+        a.messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "（行动）我往北走"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c", "type": "function",
+                             "function": {"name": "move", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c", "content": "{}"},
+            {"role": "assistant", "content": "你走进草原，雾气漫过脚踝。"},
+        ]
+        self._slots = []
+
+    def tearDown(self):
+        for slot in self._slots:
+            for p in (mcp_server.SAVE_DIR / f"{slot}.json", self.web._session_path(slot)):
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    def test_transcript_extracts_player_and_gm_only(self):
+        # 只抽 玩家输入(去模式前缀) + GM 散文；跳过工具调用/工具结果
+        tr = self.web._transcript(self.web._get_agent().messages)
+        self.assertEqual(tr, [{"role": "player", "text": "我往北走"},
+                              {"role": "gm", "text": "你走进草原，雾气漫过脚踝。"}])
+
+    def test_save_load_conversation_roundtrip(self):
+        slot = "sess_ut_roundtrip"; self._slots.append(slot)
+        self.web._save_conversation(slot, "测试")
+        self.web._get_agent().messages = [{"role": "system", "content": "x"}]   # 抹掉内存
+        self.assertTrue(self.web._load_conversation(slot))
+        self.assertEqual(self.web._get_agent().messages[-1]["content"], "你走进草原，雾气漫过脚踝。")
+
+    def test_named_save_appears_in_list(self):
+        slot = "sess_ut_listed"; self._slots.append(slot)
+        mcp_server.save_game(slot)
+        self.web._save_conversation(slot, "列表测试")
+        data = json.loads(self.web.session_list().body)
+        entry = next((s for s in data["sessions"] if s["id"] == slot), None)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["title"], "列表测试")
 
 
 class PromptModeTest(unittest.TestCase):

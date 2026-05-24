@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 import mcp_server
@@ -28,12 +29,123 @@ app = FastAPI(title="文字冒险 · Web")
 _agent = None
 _lock = threading.Lock()   # 单会话回合串行化
 
+# ── 会话持久化 ─────────────────────────────────────────────────────
+# 一个"会话" = 引擎状态(mcp_server 的 save_game/autosave) + 对话历史(agent.messages)。
+# 引擎状态本就自动存档；这里补上【对话】的持久化(sidecar)，并提供 新建/保存/列表/恢复。
+# 当前会话的对话存在 _autosave.session.json，与引擎 _autosave.json 对齐，刷新/重启即恢复。
+_SESSION_SUFFIX = ".session.json"
+_CURRENT_SLOT = mcp_server.AUTOSAVE_SLOT   # "_autosave"
+
+
+def _session_path(slot: str):
+    return mcp_server.SAVE_DIR / f"{slot}{_SESSION_SUFFIX}"
+
+
+def _auto_title() -> str:
+    s = mcp_server.SESSION
+    if s.started:
+        room = s.world.get_room(s.state.position)
+        loc = room.name if room else s.state.position
+        return f"{s.world_name} · {loc} · 第{s.state.turn}回合"
+    return time.strftime("%m-%d %H:%M")
+
+
+def _save_conversation(slot: str, title: str = "") -> dict:
+    s = mcp_server.SESSION
+    meta = {
+        "id": slot,
+        "title": title or _auto_title(),
+        "world": s.world_name if s.started else "",
+        "turn": s.state.turn if s.started else 0,
+        "updated": time.strftime("%Y-%m-%d %H:%M"),
+    }
+    try:
+        payload = dict(meta, messages=_get_agent().messages)
+        _session_path(slot).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    return meta
+
+
+def _load_conversation(slot: str) -> bool:
+    p = _session_path(slot)
+    if not p.exists():
+        return False
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    msgs = data.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return False
+    _get_agent().messages = msgs
+    return True
+
+
+def _autosave_conversation():
+    """每回合末把当前会话的对话落盘（与引擎 autosave 对齐）。失败不阻塞。"""
+    _save_conversation(_CURRENT_SLOT, _auto_title())
+
+
+_SEED_MARK = "（系统提示"   # 开场喂给 GM 的权威种子前缀；不算玩家发言，叙事流里跳过
+
+
+def _opening_seed() -> str:
+    """全新开局：服务端先把游戏 start_game 起来，再把权威开场信息打包成给 GM 的种子，
+    强制它【只依据真实场景】写开场，杜绝"不调工具、凭空脑补开场"。"""
+    try:
+        sg = mcp_server.start_game()
+    except Exception:
+        return ""
+    scene = sg.get("scene", {}) or {}
+    objs = "、".join(o.get("name", "") for o in scene.get("objects", []) if o.get("name"))
+    exits_raw = scene.get("exits", {})
+    exits = "、".join(exits_raw.keys()) if isinstance(exits_raw, dict) else ""
+    canon = sg.get("world_canon", "")
+    blurb = ""
+    if isinstance(canon, dict):
+        blurb = canon.get("setting_blurb", "")
+    elif isinstance(canon, str):
+        blurb = canon[:400]
+    return (
+        f"{_SEED_MARK}，非玩家发言：新游戏已开始、引擎已就位。请【只依据下列权威信息】"
+        "写一段沉浸式开场叙事，严禁脑补任何武器/物品/尸体/未提及的地点，也不要再调用 start_game。）\n"
+        f"世界基调：{blurb}\n当前位置：{scene.get('name', '')}\n"
+        f"在场可见：{objs or '（无显著物件）'}\n出口：{exits or '（无）'}\n"
+        "开场处境：你只有 6 点血、赤手空拳、身无分文、谁也不认识——这是一个『破局』开局。"
+    )
+
+
+def _transcript(messages: list) -> list:
+    """从对话历史抽出【玩家可见叙事流】：玩家输入 + GM 那几段散文（跳过工具调用/抢跑/开场种子）。"""
+    out = []
+    for m in messages:
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if role == "user":
+            if content.startswith(_SEED_MARK):    # 开场种子是喂给 GM 的，不是玩家发言
+                continue
+            for pref in _MODE_PREFIX.values():    # 去掉 说话/行动/场外 前缀
+                if content.startswith(pref):
+                    content = content[len(pref):]
+                    break
+            if content:
+                out.append({"role": "player", "text": content})
+        elif role == "assistant" and content and not m.get("tool_calls"):
+            out.append({"role": "gm", "text": content})
+    return out
+
 
 def _get_agent():
     global _agent
     if _agent is None:
         # rich_ui：web 自己渲染 HUD/场景/骰子/战斗面板，GM 走散文模式（不粘状态块）
         _agent = make_agent(LLMConfig.from_env(), rich_ui=True)
+        # 进程重启：把当前会话的对话从盘上接回来（引擎状态另由 autosave 惰性恢复）
+        try:
+            _load_conversation(_CURRENT_SLOT)
+        except Exception:
+            pass
     return _agent
 
 
@@ -256,6 +368,10 @@ async def turn(request: Request) -> StreamingResponse:
             agent = _get_agent()
             # mode 作为轻量前缀提示 GM（说话/行动/场外）；空 input = 开局
             full = (_MODE_PREFIX.get(mode, "") + text) if text else ""
+            # 全新开局：服务端【确定性】start_game 并把权威开场喂给 GM——
+            # 否则 GM 可能不调工具、凭空脑补一个错的开场（实测会，且 SESSION 没起）。
+            if not text and not mcp_server.SESSION.started:
+                full = _opening_seed()
             try:
                 for kind, payload in agent.run_turn_stream(full):
                     if kind == "delta":
@@ -275,10 +391,95 @@ async def turn(request: Request) -> StreamingResponse:
                         yield _sse("final", {"text": payload})
             except Exception as exc:
                 yield _sse("error", {"message": f"{type(exc).__name__}: {exc}"})
-            # 回合末推一次最新状态条
+            # 回合末推一次最新状态条 + 落盘对话（与引擎 autosave 对齐）
+            _autosave_conversation()
             yield _sse("hud", hud_payload())
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ── 会话管理端点（前端会话菜单用）──────────────────────────────────
+@app.get("/session/current")
+def session_current() -> JSONResponse:
+    """页面加载时调：恢复进行中的会话（引擎状态 + 对话叙事流）。"""
+    _get_agent()                                  # 创建时已尝试接回对话
+    if not mcp_server.SESSION.started:
+        try:
+            mcp_server._maybe_restore_autosave()  # 引擎状态接回
+        except Exception:
+            pass
+    started = mcp_server.SESSION.started
+    tr = _transcript(_get_agent().messages) if started else []
+    return JSONResponse({"started": started, "transcript": tr, "hud": hud_payload()})
+
+
+@app.post("/session/new")
+async def session_new() -> JSONResponse:
+    """新对话：清当前自动存档（引擎+对话）+ 重置引擎为未开局 + 全新对话。
+    之后前端发空开局回合，GM 干净起手。"""
+    global _agent
+    with _lock:
+        for p in (mcp_server.SAVE_DIR / f"{_CURRENT_SLOT}.json", _session_path(_CURRENT_SLOT)):
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
+        mcp_server.SESSION = mcp_server.Session()              # 引擎置未开局
+        _agent = make_agent(LLMConfig.from_env(), rich_ui=True)  # 全新对话
+    return JSONResponse({"ok": True})
+
+
+@app.post("/session/save")
+async def session_save(request: Request) -> JSONResponse:
+    """把当前会话存成命名快照（引擎 slot + 对话 sidecar）。"""
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    if not mcp_server.SESSION.started:
+        return JSONResponse({"ok": False, "error": "尚未开局，没有可保存的会话。"})
+    with _lock:
+        slot = "sess_" + time.strftime("%Y%m%d_%H%M%S")
+        eng = mcp_server.save_game(slot)
+        if not eng.get("ok"):
+            return JSONResponse(eng)
+        meta = _save_conversation(eng["slot"], title)
+    return JSONResponse({"ok": True, **meta})
+
+
+@app.get("/session/list")
+def session_list() -> JSONResponse:
+    """列出所有命名会话快照（不含当前自动存档）。"""
+    out = []
+    for p in mcp_server.SAVE_DIR.glob(f"*{_SESSION_SUFFIX}"):
+        slot = p.name[: -len(_SESSION_SUFFIX)]
+        if slot == _CURRENT_SLOT:
+            continue
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        out.append({"id": slot, "title": d.get("title", slot),
+                    "world": d.get("world", ""), "turn": d.get("turn", 0),
+                    "updated": d.get("updated", "")})
+    out.sort(key=lambda x: x["updated"], reverse=True)
+    return JSONResponse({"sessions": out})
+
+
+@app.post("/session/resume")
+async def session_resume(request: Request) -> JSONResponse:
+    """恢复某个命名会话：引擎状态 + 对话 + 叙事流，并设为当前会话。"""
+    body = await request.json()
+    sid = (body.get("id") or "").strip()
+    with _lock:
+        eng = mcp_server.load_game(sid)
+        if not eng.get("ok"):
+            return JSONResponse(eng)
+        if not _load_conversation(sid):
+            return JSONResponse({"ok": False, "error": "该会话的对话记录缺失。"})
+        # 设为当前会话：引擎 + 对话都同步到自动存档槽，后续自动存延续这一局
+        mcp_server._autosave()
+        _autosave_conversation()
+        tr = _transcript(_get_agent().messages)
+    return JSONResponse({"ok": True, "transcript": tr, "hud": hud_payload()})
 
 
 def main() -> int:
