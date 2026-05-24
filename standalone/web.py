@@ -167,7 +167,9 @@ def _transcript(messages: list) -> list:
                     break
             if content:
                 out.append({"role": "player", "text": content})
-        elif role == "assistant" and content and not m.get("tool_calls"):
+        elif role == "assistant" and content:
+            # 含 tool_calls 的 assistant 消息，其 content 是"先叙事后调工具"的正式叙事——
+            # 同样进叙事流，否则刷新/恢复后这段先导叙事会丢（与实时显示不一致）。
             out.append({"role": "gm", "text": content})
     return out
 
@@ -597,9 +599,9 @@ async def turn(request: Request) -> StreamingResponse:
                         for rtype, rdata in _render_events(payload.get("name"),
                                                            payload.get("result")):
                             yield _sse("render", {"type": rtype, "data": rdata})
-                    elif kind == "reset":
-                        # 中间轮抢跑叙事 → 让前端清掉，等最后一轮重新流
-                        yield _sse("reset", {})
+                    elif kind == "commit":
+                        # 先叙事后调工具：封存这段叙事（不吞），后续叙事另起一段接在工具痕迹后
+                        yield _sse("commit", {})
                     elif kind == "final":
                         yield _sse("final", {"text": payload})
             except Exception as exc:

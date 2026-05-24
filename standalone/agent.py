@@ -205,6 +205,7 @@ class GameAgent:
             self.messages.append({"role": "user", "content": player_input})
         self._compress_history()   # 回合开始先压缩，控住上下文体量
 
+        narration_parts: list[str] = []   # 跨轮累积 GM 叙事（含"先叙事再调工具"的先导段），别丢
         for _ in range(MAX_TOOL_ITERS):
             resp = self._complete()
             msg = resp.choices[0].message
@@ -212,8 +213,10 @@ class GameAgent:
             # 把 assistant 消息原样入历史（含 tool_calls，OpenAI 协议要求）
             self.messages.append(msg.model_dump(exclude_none=True))
 
+            if msg.content and msg.content.strip():
+                narration_parts.append(msg.content.strip())
             if not msg.tool_calls:
-                return (msg.content or "").strip()
+                return "\n\n".join(narration_parts)
 
             # 执行每个工具调用，结果以 role=tool 喂回
             for tc in msg.tool_calls:
@@ -231,7 +234,8 @@ class GameAgent:
                     "content": json.dumps(result, ensure_ascii=False),
                 })
 
-        return "（GM 在本回合调用工具过多，已中断。请再试一次或换个说法。）"
+        return "\n\n".join(narration_parts +
+                           ["（GM 在本回合调用工具过多，已中断。请再试一次或换个说法。）"])
 
     def run_turn_stream(self, player_input: str):
         """流式版回合：生成器，逐事件 yield。
@@ -297,10 +301,11 @@ class GameAgent:
                 yield ("final", full_content.strip())
                 return
 
-            # 这轮是【工具调用轮】，但它也喷了叙事（抢在工具结果出来前的"抢跑草稿"）——
-            # 玩家该看到的是最后一轮结算后的叙事，不是这段抢跑文。让前端把已流出的这段清掉。
+            # 这轮【先叙事再调工具】（如"你扑上去——"接着 deal_damage）：这段叙事是正式的，
+            # 不是抢跑草稿，别吞。让前端把它【封存】成一段、保留在流里，后续叙事另起一段
+            # 接在工具痕迹之后——读起来就是"叙事→掷骰/结算→叙事"的自然节奏。
             if full_content.strip():
-                yield ("reset", "")
+                yield ("commit", "")
 
             # 组装 assistant 消息（含 tool_calls）入历史
             # 思考模型要求把 reasoning_content 一并回传，否则下一轮 400。

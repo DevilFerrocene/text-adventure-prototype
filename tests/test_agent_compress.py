@@ -191,26 +191,35 @@ class ToolTracePayloadTest(unittest.TestCase):
         # 仍正常产出最终叙事
         self.assertTrue(any(k == "final" for k, _ in events))
 
-    def test_intermediate_round_narration_emits_reset(self):
-        # F5：调工具那一轮如果也喷了叙事（抢跑草稿），须发 reset 让前端清掉，
-        # 玩家只该看到最后一轮结算后的叙事。
+    def test_lead_in_narration_committed_not_dropped(self):
+        # 先叙事再调工具（"你扑上去——"接 deal_damage）是正式叙事，不能吞：
+        # 该段须先逐字流出(delta)，再发 commit 封存（保留在流里），最后才是结算后叙事。
         mcp_server.start_game("aincrad")
         a = _agent()
         rounds = [
-            # 第一轮：又喷叙事、又调工具 → 抢跑，应触发 reset
-            [_chunk(content="（抢跑草稿）你冲上去——"),
+            # 第一轮：先喷一段先导叙事、再调工具
+            [_chunk(content="你扑上去——"),
              _chunk(tool_calls=[_tc(0, "call_1", "get_scene", "{}")])],
-            # 第二轮：最终叙事
-            [_chunk(content="尘埃落定，你站定。")],
+            # 第二轮：结算后叙事
+            [_chunk(content="剑刃没入野猪颈侧。")],
         ]
         a.client.chat.completions.create = lambda **kw: rounds.pop(0)
-        kinds = [k for k, _ in a.run_turn_stream("看看")]
-        self.assertIn("reset", kinds)
+        events = list(a.run_turn_stream("揍它"))
+        kinds = [k for k, _ in events]
+        deltas = "".join(p for k, p in events if k == "delta")
+        self.assertIn("commit", kinds)
         self.assertIn("final", kinds)
-        self.assertLess(kinds.index("reset"), kinds.index("final"))   # reset 在 final 之前
+        self.assertLess(kinds.index("commit"), kinds.index("final"))     # commit 在 final 之前
+        # 先导叙事必须流出去（没被吞），且 commit 在它之后、工具之前
+        self.assertIn("你扑上去——", deltas)
+        self.assertIn("剑刃没入野猪颈侧。", deltas)
+        self.assertLess(kinds.index("commit"), kinds.index("tool"))
+        # 两段叙事都进了历史（刷新后 transcript 能恢复全部叙事）
+        narrations = [m.get("content") for m in a.messages if m.get("role") == "assistant"]
+        self.assertTrue(any("你扑上去——" in (c or "") for c in narrations))
 
-    def test_clean_tool_round_no_reset(self):
-        # 调工具那轮【没喷叙事】（规矩做法）→ 不该有多余的 reset
+    def test_clean_tool_round_no_commit(self):
+        # 调工具那轮【没喷叙事】（先结算后叙事的规矩做法）→ 不该有多余的 commit
         mcp_server.start_game("aincrad")
         a = _agent()
         rounds = [
@@ -219,7 +228,7 @@ class ToolTracePayloadTest(unittest.TestCase):
         ]
         a.client.chat.completions.create = lambda **kw: rounds.pop(0)
         kinds = [k for k, _ in a.run_turn_stream("看看")]
-        self.assertNotIn("reset", kinds)
+        self.assertNotIn("commit", kinds)
 
 
 if __name__ == "__main__":

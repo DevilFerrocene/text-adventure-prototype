@@ -287,6 +287,24 @@ class SessionPersistenceTest(unittest.TestCase):
         self.assertEqual(tr, [{"role": "player", "text": "我往北走"},
                               {"role": "gm", "text": "你走进草原，雾气漫过脚踝。"}])
 
+    def test_transcript_keeps_lead_in_narration_before_tool(self):
+        # "先叙事再调工具"的先导叙事（assistant 同时有 content 和 tool_calls）也要进叙事流，
+        # 否则刷新/恢复后这段会丢、与实时显示不一致。
+        a = self.web._get_agent()
+        a.messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "（行动）揍野猪"},
+            {"role": "assistant", "content": "你扑上去——",
+             "tool_calls": [{"id": "c", "type": "function",
+                             "function": {"name": "deal_damage", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c", "content": "{}"},
+            {"role": "assistant", "content": "剑刃没入野猪颈侧。"},
+        ]
+        tr = self.web._transcript(a.messages)
+        self.assertEqual(tr, [{"role": "player", "text": "揍野猪"},
+                              {"role": "gm", "text": "你扑上去——"},
+                              {"role": "gm", "text": "剑刃没入野猪颈侧。"}])
+
     def test_save_load_conversation_roundtrip(self):
         slot = "sess_ut_roundtrip"; self._slots.append(slot)
         self.web._save_conversation(slot, "测试")

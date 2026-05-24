@@ -586,9 +586,9 @@ async function sendTurn(text){
           think.textContent='⋯ GM 正在推演';
         }else if(ev==='render'){
           renderCard(data.type, data.data);
-        }else if(ev==='reset'){
-          // 中间轮的"抢跑叙事"——清掉，等最后一轮重新流（玩家只该看到结算后的叙事）
-          if(gm){ gm.remove(); gm=null; }
+        }else if(ev==='commit'){
+          // 先叙事后调工具：封存这段叙事（去光标、定稿、保留），后续叙事另起一段接在工具痕迹之后
+          if(gm){ gm.classList.remove('cursor'); gm.innerHTML=mdToHtml(gm.dataset.raw||''); gm=null; }
         }else if(ev==='final'){
           if(gm){ gm.classList.remove('cursor'); gm.innerHTML=mdToHtml(gm.dataset.raw||data.text); }
         }else if(ev==='hud'){
