@@ -17,7 +17,7 @@
 需要 **Python 3.10+**（开发于 3.11）。
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/DevilFerrocene/text-adventure-prototype
 cd "Text Adventure Prototype"
 
 python3 -m venv venv
