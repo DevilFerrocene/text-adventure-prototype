@@ -360,8 +360,10 @@ body{ display:block; align-items:stretch; height:100vh; overflow:hidden; }
 #env-body{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center}
 #env-body .ev .lbl{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--fg-mute)}
 #env-body .ev .val{font-family:var(--serif);font-size:15px;color:var(--fg-dim);margin-top:4px;display:block}
-/* 棋盘格悬停提示 */
+/* 棋盘格悬停提示 + 可点移动 */
 .bcell[data-tip]{cursor:help}
+.bcell[data-move]{cursor:pointer}
+.bcell[data-move]:hover{box-shadow:0 0 0 2px var(--amber) inset}
 #board-tip{position:fixed;z-index:60;pointer-events:none;display:none;background:var(--bg-soft);
   border:1px solid var(--line);border-radius:9px;padding:7px 11px;max-width:214px;
   box-shadow:0 10px 28px oklch(0.1 0.01 55 / .55)}
@@ -724,6 +726,13 @@ $('#sesstools').onclick=e=>{
 };
 renderQuickIntents();
 
+// ── 点击棋盘格 → 命令 GM 移动过去（侧栏 + 抽屉共用）──
+document.addEventListener('click',e=>{
+  const c=e.target.closest('.bcell[data-move]'); if(!c) return;
+  if(busy) return;
+  if(boardTip) boardTip.style.display='none';
+  sendTurn(c.dataset.move);
+});
 // ── 棋盘格悬停提示（侧栏 + 抽屉两块棋盘共用）──
 let boardTip=null;
 document.addEventListener('mousemove',e=>{
@@ -887,7 +896,15 @@ function renderBoard(b, avail=320, compact=false){
         }
         tip = ` data-tip="${esc2(nmText)}|${esc2(sub)}"`;
       }
-      cells += `<div class="${cls.join(' ')}"${tip} style="width:${cs}px;height:${cs}px">${g}${nm}${you}</div>`;
+      // 点击该格 → 命令 GM 移动过去（出口=离开/物体=走到/敌人=逼近；空格与玩家自身不可点）
+      let mv='';
+      if(t && !here){
+        const cmd = t.kind==='exit' ? `向${DIR_CN[t.dir]||t.dir}走`
+                  : t.kind==='enemy' ? `走向${t.name}`
+                  : `走到${t.name}`;
+        mv = ` data-move="${esc2(cmd)}"`;
+      }
+      cells += `<div class="${cls.join(' ')}"${tip}${mv} style="width:${cs}px;height:${cs}px">${g}${nm}${you}</div>`;
     }
   }
   const hint = compact ? `${esc2(b.room)} · 北↑`
