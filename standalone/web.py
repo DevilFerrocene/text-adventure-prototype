@@ -326,8 +326,70 @@ def _board_payload(world, st) -> dict | None:
     }
 
 
+_KIND_LABEL = {"npc": "人物", "scenery": "景物", "container": "容器", "document": "文书",
+               "item": "物品", "陈设": "陈设", "生物": "生物"}
+_WEATHER_LABEL = {"clear": "晴", "misty": "雾", "mist": "雾", "rain": "雨",
+                  "storm": "暴风", "snow": "雪", "fog": "雾", "overcast": "阴"}
+_PHASE_LABEL = {"dawn": "破晓", "morning": "清晨", "noon": "正午", "afternoon": "午后",
+                "dusk": "黄昏", "evening": "傍晚", "night": "夜", "midnight": "深夜"}
+
+
+def _dist_label(sp: dict | None) -> str:
+    """把棋盘 spatial（方位/步/远近）压成一行距离标签。无 grid/未钉格 → 空串。"""
+    if not sp:
+        return ""
+    if sp.get("in_reach"):
+        return "手边"
+    bearing = sp.get("bearing", "")
+    steps = sp.get("steps")
+    if steps is not None and steps <= 3:
+        return f"{steps} 步·{bearing}" if bearing else f"{steps} 步"
+    return f"{sp.get('proximity', '')}·{bearing}" if bearing else sp.get("proximity", "")
+
+
+def _scene_objects(world, st) -> dict:
+    """当前场景对象清单（名/类/类别/距离·方位），供右栏「场景对象」面板。距离取棋盘真值。"""
+    room = world.get_room(st.position)
+    if not room:
+        return {"room": st.position, "objects": [], "exits": []}
+    snap = mcp_server._room_snapshot(world, st)
+    out = []
+
+    def push(name, kind, cat, sp, extra=None):
+        row = {"name": name, "kind": kind, "kind_label": _KIND_LABEL.get(kind, kind),
+               "cat": cat, "dist": _dist_label(sp), "steps": (sp or {}).get("steps")}
+        if extra:
+            row.update(extra)
+        out.append(row)
+
+    for o in snap.get("objects", []):
+        verbs = o.get("callable_verbs", [])
+        interactable = bool(o.get("takable")) or any(v != "inspect" for v in verbs)
+        kind = o.get("kind", "")
+        cat = "生物" if kind == "npc" else ("可交互" if interactable else "地形")
+        push(o["name"], kind, cat, o.get("spatial"))
+    for a in snap.get("ambient", []):
+        push(a["name"], "陈设", "地形", a.get("spatial"))
+    for fe in st.enemy_field:
+        tmpl = world.get_enemy(fe["enemy_id"])
+        nm = tmpl.name if tmpl else fe["enemy_id"]
+        sp = mcp_server._cell_annotation(st, room, fe["cell"])
+        push(nm, "生物", "生物", sp, {"state": fe.get("state", "idle")})
+
+    out.sort(key=lambda e: (e.get("steps") is None, e.get("steps") or 0))
+    exits = [{"dir": d, "locked": d in (room.locked_exits or {})} for d in room.exits]
+    return {"room": room.name, "objects": out, "exits": exits}
+
+
+def _environment(st) -> dict:
+    wt = st.world_time
+    return {"weather": _WEATHER_LABEL.get(wt.weather, wt.weather or "—"),
+            "phase": _PHASE_LABEL.get(wt.phase, wt.phase or "—"),
+            "day": wt.day}
+
+
 def panels_payload() -> dict:
-    """侧栏面板数据：背包 / 技能 / 任务 / 地图 / 场地（棋盘）。只读看板，每回合刷新。"""
+    """侧栏面板数据：背包 / 技能 / 任务 / 地图 / 场地（棋盘）+ 场景对象 / 环境。只读看板，每回合刷新。"""
     s = mcp_server.SESSION
     if not s.started:
         return {"started": False}
@@ -377,7 +439,8 @@ def panels_payload() -> dict:
         })
     return {"started": True, "inventory": inventory, "skills": skills,
             "quests": quests, "map": {"rooms": rooms, "area": area},
-            "board": _board_payload(s.world, st)}
+            "board": _board_payload(s.world, st),
+            "scene": _scene_objects(s.world, st), "environment": _environment(st)}
 
 
 _MODE_PREFIX = {

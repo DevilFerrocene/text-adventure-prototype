@@ -129,8 +129,22 @@ class PanelsPayloadTest(unittest.TestCase):
     def test_all_sections_present(self):
         p = panels_payload()
         self.assertTrue(p["started"])
-        for k in ("inventory", "skills", "quests", "map", "board"):
+        for k in ("inventory", "skills", "quests", "map", "board", "scene", "environment"):
             self.assertIn(k, p)
+
+    def test_scene_objects_and_environment(self):
+        mcp_server.move("east")                       # 进酒馆（有 grid，物体带距离）
+        p = panels_payload()
+        sc = p["scene"]
+        self.assertEqual(sc["room"], "锈角酒馆")
+        self.assertTrue(sc["objects"])
+        o0 = sc["objects"][0]
+        for k in ("name", "kind", "cat", "dist", "steps"):
+            self.assertIn(k, o0)
+        self.assertIn(o0["cat"], ("可交互", "生物", "地形", "其他"))
+        self.assertTrue(any(e["dir"] == "west" for e in sc["exits"]))
+        self.assertIn("weather", p["environment"])
+        self.assertIn("phase", p["environment"])
         self.assertIsInstance(p["inventory"], list)   # 冷开局空背包
         self.assertGreaterEqual(len(p["quests"]), 1)  # 开场任务「破局」在
 

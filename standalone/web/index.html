@@ -270,21 +270,105 @@ body{
 @keyframes develop{from{letter-spacing:.55em;filter:blur(10px);opacity:0}to{letter-spacing:.14em;filter:blur(0);opacity:1}}
 #spectacle .desc{font-family:var(--sans);color:var(--fg-dim);margin-top:20px;animation:fadein 1s .9s both}
 #spectacle .hint{font-family:var(--mono);font-size:11px;color:var(--fg-mute);margin-top:30px;animation:fadein 1s 1.4s both}
+
+/* ════════ 三栏 game-client 布局（覆盖旧的竖排堆叠）════════ */
+body{ display:block; align-items:stretch; height:100vh; overflow:hidden; }
+#topbar{ width:100%; max-width:none; height:46px; box-sizing:border-box; }
+#topbar .logo{color:var(--amber);font-size:15px}
+#topbar .dim{color:var(--fg-mute)}
+#topbar #tabs{display:flex}
+#topbar #sessbtn{cursor:pointer;color:var(--fg-dim);border:1px solid var(--line);border-radius:5px;padding:3px 10px}
+#topbar #sessbtn:hover{color:var(--fg);border-color:var(--fg-mute)}
+#app{ display:grid; grid-template-columns:296px minmax(0,1fr) 326px; gap:14px;
+  height:calc(100vh - 46px); padding:14px; box-sizing:border-box; max-width:1600px; margin:0 auto; }
+.col{ min-height:0; display:flex; flex-direction:column; gap:14px; }
+.col-l, .col-r{ overflow-y:auto; scrollbar-width:thin; }
+.col-c{ overflow:hidden; }
+.pcard{ background:var(--bg-soft); border:1px solid var(--line-soft); border-radius:14px; padding:14px 16px; }
+.pcard-h{ font-family:var(--serif); font-size:15px; color:var(--fg); margin-bottom:13px; }
+
+/* 左：角色状态 */
+.status-body .st-vital{margin-bottom:11px}
+.st-vital .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--fg-mute);text-transform:uppercase}
+.st-vital .val{float:right;font-family:var(--mono);font-size:13px;color:var(--fg)}
+.st-vital .vbar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px;clear:both}
+.st-vital .vbar i{display:block;height:100%;border-radius:3px;transition:width .35s var(--ease-in)}
+.st-vital[data-sem=hp] .vbar i{background:var(--red)}
+.st-vital[data-sem=sp] .vbar i{background:var(--cyan)}
+.st-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}
+.st-cell{background:var(--panel);border:1px solid var(--line-soft);border-radius:9px;padding:8px 9px}
+.st-cell .lbl{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--fg-mute)}
+.st-cell .val{font-family:var(--mono);font-size:15px;color:var(--fg-dim)}
+
+/* 左：位置与出口（小罗盘 + 出口 chip）*/
+#loc-body .loc-name{font-family:var(--serif);font-size:16px;color:var(--fg);margin-bottom:10px}
+.compass{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;width:120px;margin:0 auto 10px}
+.compass .cc{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border:1px solid var(--line-soft);
+  border-radius:6px;font-family:var(--mono);font-size:11px;color:var(--fg-mute);background:var(--panel)}
+.compass .cc.on{color:var(--amber);border-color:var(--amber)}
+.compass .cc.mid{color:var(--fg);border-color:var(--line);background:transparent}
+.exit-chips{display:flex;flex-wrap:wrap;gap:6px}
+.exit-chips .ec{font-family:var(--mono);font-size:11px;color:var(--fg-dim);background:var(--panel);
+  border:1px solid var(--line-soft);border-radius:6px;padding:4px 9px;cursor:pointer}
+.exit-chips .ec:hover{color:var(--amber);border-color:var(--amber)}
+.exit-chips .ec.locked{color:var(--red);border-color:transparent;cursor:default;opacity:.7}
+
+/* 左：会话工具 */
+#sesstools{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#sesstools button,#quickintents button{font-family:var(--sans);font-size:12.5px;color:var(--fg-dim);
+  background:var(--panel);border:1px solid var(--line-soft);border-radius:9px;padding:9px 8px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;transition:all .18s}
+#sesstools button:hover,#quickintents button:hover{color:var(--amber);border-color:var(--amber)}
+#sesstools .ic{opacity:.8}
+
+/* 中栏 */
+.col-c #stage-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 4px 10px;
+  font-family:var(--serif);font-size:16px;color:var(--fg);border-bottom:1px solid var(--line-soft)}
+.col-c #stage-head .live{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+.col-c #stage-head #clearlog{font-family:var(--mono);font-size:11px;color:var(--fg-mute);cursor:pointer}
+.col-c #stage-head #clearlog:hover{color:var(--fg-dim)}
+.col-c #stage{flex:1 1 auto;min-height:0;overflow-y:auto;padding:14px 6px 6px;scroll-behavior:smooth}
+#inputbar{flex:0 0 auto;width:100%;max-width:none;margin-top:10px;border:1px solid var(--line);border-radius:12px;
+  background:var(--bg-soft);padding:10px 12px;display:flex;align-items:center;gap:10px}
+#quickcmds{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+#quickcmds .qc{font-family:var(--sans);font-size:12px;color:var(--fg-dim);background:var(--bg-soft);
+  border:1px solid var(--line-soft);border-radius:7px;padding:5px 11px;cursor:pointer;transition:all .18s}
+#quickcmds .qc:hover{color:var(--amber);border-color:var(--amber)}
+#quickcmds .qc .qlabel{color:var(--fg-mute);margin-right:5px;font-family:var(--mono);font-size:10px}
+
+/* 右：场景对象 */
+#scene-filter{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+#scene-filter .sf{font-family:var(--mono);font-size:10.5px;color:var(--fg-mute);cursor:pointer;
+  padding:3px 8px;border-radius:6px;border:1px solid transparent}
+#scene-filter .sf.active{color:var(--amber);border-color:var(--amber)}
+.so-row{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--line-soft)}
+.so-row:last-child{border-bottom:none}
+.so-ic{width:26px;height:26px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  background:var(--panel);border:1px solid var(--line-soft);border-radius:7px;font-size:13px}
+.so-nm{flex:1;min-width:0;font-size:13px;color:var(--fg)}
+.so-nm .so-cat{display:block;font-family:var(--mono);font-size:9.5px;color:var(--fg-mute);font-style:normal;margin-top:1px}
+.so-d{font-family:var(--mono);font-size:10.5px;color:var(--fg-mute);white-space:nowrap}
+.so-row.enemy .so-ic{border-color:var(--amber);color:var(--amber)}
+.so-row.enemy.hostile .so-ic{border-color:var(--red);color:var(--red)}
+.so-more{font-family:var(--mono);font-size:11px;color:var(--fg-mute);text-align:center;padding-top:10px;cursor:pointer}
+.so-more:hover{color:var(--fg-dim)}
+
+/* 右：快捷意图 */
+#quickintents{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+/* 右：环境状态 */
+#env-body{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center}
+#env-body .ev .lbl{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--fg-mute)}
+#env-body .ev .val{font-family:var(--serif);font-size:15px;color:var(--fg-dim);margin-top:4px;display:block}
 </style>
 </head>
 <body>
   <div id="topbar">
-    <span class="dot"></span>
+    <span class="logo">✦</span>
     <span class="mono" id="session-id">SESSION · ····</span>
     <span class="mono" id="topbar-world">—</span>
+    <span class="dot"></span><span class="mono dim">在线</span>
     <span class="sp"></span>
-    <span class="mono">I·S·Q·M 面板 · ↵ 提交</span>
-    <span class="mono" id="sessbtn">会话 ▾</span>
-    <div id="sessmenu"></div>
-  </div>
-
-  <div id="statusbar">
-    <div id="stats"><div class="stat"><span class="k">连接中</span><span class="v">…</span></div></div>
     <div id="tabs">
       <div class="tab" data-tab="inventory"><span>背包</span><span class="badge">I</span></div>
       <div class="tab" data-tab="skills"><span>技能</span><span class="badge">S</span></div>
@@ -292,22 +376,46 @@ body{
       <div class="tab" data-tab="map"><span>地图</span><span class="badge">M</span></div>
       <div class="tab" data-tab="board"><span>场地</span><span class="badge">B</span></div>
     </div>
+    <span class="mono" id="sessbtn">会话 ▾</span>
+    <div id="sessmenu"></div>
   </div>
 
-  <div id="stage-wrap">
-    <div id="stage-head"><span class="live"></span><span id="stage-scene">序章</span><span class="sp" style="flex:1"></span><span>GM 在线</span></div>
-    <div id="stage"></div>
-  </div>
+  <div id="app">
+    <aside class="col col-l">
+      <section class="pcard"><div class="pcard-h"><span>👤 角色状态</span></div><div id="status-body" class="status-body"></div></section>
+      <section class="pcard"><div class="pcard-h"><span>📍 位置与出口</span></div><div id="loc-body"></div></section>
+      <section class="pcard"><div class="pcard-h"><span>🧰 会话工具</span></div>
+        <div id="sesstools">
+          <button data-act="save"><span class="ic">💾</span>存档</button>
+          <button data-act="resume"><span class="ic">↺</span>回溯</button>
+          <button data-act="clear"><span class="ic">🧹</span>清屏</button>
+          <button data-act="settings"><span class="ic">⚙</span>设置</button>
+        </div>
+      </section>
+    </aside>
 
-  <div id="inputbar">
-    <div class="modes">
-      <span class="mode active" data-mode="say">说话</span>
-      <span class="mode" data-mode="act">行动</span>
-      <span class="mode" data-mode="ooc">场外</span>
-    </div>
-    <span id="prompt-sign">›</span>
-    <input id="input" placeholder="输入你的行动…" autocomplete="off">
-    <span id="submit">提交 ↵</span>
+    <main class="col col-c">
+      <div id="stage-head"><span class="live"></span><span>GM 叙事</span><span class="sp" style="flex:1"></span><span id="clearlog">🗑 清空日志</span></div>
+      <div id="stage"></div>
+      <div id="inputbar">
+        <div class="modes">
+          <span class="mode active" data-mode="say">说话</span>
+          <span class="mode" data-mode="act">行动</span>
+          <span class="mode" data-mode="ooc">场外</span>
+        </div>
+        <span id="prompt-sign">›</span>
+        <input id="input" placeholder="输入你的行动…" autocomplete="off">
+        <span id="submit">提交 ↵</span>
+      </div>
+      <div id="quickcmds"></div>
+    </main>
+
+    <aside class="col col-r">
+      <section class="pcard"><div class="pcard-h"><span>🧱 场景对象</span></div>
+        <div id="scene-filter"></div><div id="scene-body"></div></section>
+      <section class="pcard"><div class="pcard-h"><span>⚡ 快捷意图</span></div><div id="quickintents"></div></section>
+      <section class="pcard"><div class="pcard-h"><span>🌗 环境状态</span></div><div id="env-body"></div></section>
+    </aside>
   </div>
 
   <div id="drawer-scrim"></div>
@@ -339,6 +447,7 @@ body{
 
 <script>
 const $ = s => document.querySelector(s);
+const esc2 = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const stage = $('#stage');
 let mode = 'say', busy = false;
 
@@ -371,25 +480,7 @@ function scrollEnd(){ stage.scrollTop = stage.scrollHeight; }
 
 // ── 状态条（去-CoC：动态属性）──
 async function refreshHud(){
-  try{
-    const s = await (await fetch('/state')).json();
-    if(!s.started) return;
-    $('#topbar-world').textContent = s.world || '';
-    $('#stage-scene').textContent = s.position || '';
-    const stats = $('#stats'); stats.innerHTML='';
-    const v = s.vitals;
-    mkStat(stats,'hp','HP', v.hp+'/'+v.max_hp, v.hp/v.max_hp);
-    if(v.max_stamina>0) mkStat(stats,'sp','SP', v.stamina+'/'+v.max_stamina, v.stamina/v.max_stamina);
-    mkStat(stats,'lv','LV', 'Lv.'+v.level, null);
-    (s.attributes||[]).forEach(a=> mkStat(stats, a.key, a.label, a.value, Math.min(1,a.value/12)));
-    mkStat(stats,'gold','金币', v.gold, null);
-  }catch(e){}
-}
-function mkStat(parent, sem, k, v, ratio){
-  const d=document.createElement('div'); d.className='stat'; d.dataset.sem=sem;
-  d.innerHTML = `<span class="k">${k}</span><span class="v">${v}</span>`+
-    (ratio!=null?`<span class="bar"><i style="width:${Math.round(ratio*100)}%"></i></span>`:'');
-  parent.appendChild(d);
+  try{ const s = await (await fetch('/state')).json(); renderHud(s); }catch(e){}
 }
 
 // ── 一个回合：POST /turn，消费 SSE ──
@@ -500,13 +591,90 @@ function addSystem(text,cls){
 }
 function renderHud(s){
   if(!s||!s.started) return;
-  $('#topbar-world').textContent=s.world||''; $('#stage-scene').textContent=s.position||'';
-  const stats=$('#stats'); stats.innerHTML=''; const v=s.vitals;
-  mkStat(stats,'hp','HP',v.hp+'/'+v.max_hp,v.hp/v.max_hp);
-  if(v.max_stamina>0) mkStat(stats,'sp','SP',v.stamina+'/'+v.max_stamina,v.stamina/v.max_stamina);
-  mkStat(stats,'lv','LV','Lv.'+v.level,null);
-  (s.attributes||[]).forEach(a=>mkStat(stats,a.key,a.label,a.value,Math.min(1,a.value/12)));
-  mkStat(stats,'gold','金币',v.gold,null);
+  const w=$('#topbar-world'); if(w) w.textContent=s.world||'';
+  renderStatus(s);
+}
+// ── 左栏：角色状态 ──
+function renderStatus(s){
+  const b=$('#status-body'); if(!b||!s||!s.vitals) return;
+  const v=s.vitals;
+  const bar=(sem,lbl,val,r)=>`<div class="st-vital" data-sem="${sem}"><span class="lbl">${lbl}</span>`+
+    `<span class="val">${val}</span><div class="vbar"><i style="width:${Math.round(Math.max(0,Math.min(1,r))*100)}%"></i></div></div>`;
+  const cell=(sem,lbl,val)=>`<div class="st-cell" data-sem="${sem}"><span class="lbl">${esc2(lbl)}</span><span class="val">${esc2(String(val))}</span></div>`;
+  let h=bar('hp','HP',v.hp+' / '+v.max_hp, v.max_hp?v.hp/v.max_hp:0);
+  if(v.max_stamina>0) h+=bar('sp','SP',v.stamina+' / '+v.max_stamina, v.stamina/v.max_stamina);
+  let cells=cell('lv','LV','Lv.'+v.level);
+  (s.attributes||[]).forEach(a=>cells+=cell(a.key,a.label,a.value));
+  cells+=cell('gold','金币',v.gold);
+  b.innerHTML=h+`<div class="st-grid">${cells}</div>`;
+}
+// ── 左栏：位置与出口（小罗盘 + 出口 chip）──
+const DIR_CN={north:'北',south:'南',east:'东',west:'西',up:'上',down:'下','in':'进','out':'出'};
+function renderLocation(P){
+  const b=$('#loc-body'); if(!b) return;
+  const sc=P&&P.scene; if(!sc){ b.innerHTML='<div class="pempty">—</div>'; return; }
+  const exits=sc.exits||[]; const find=d=>exits.find(e=>e.dir===d);
+  const cc=(d,txt)=>{const e=find(d); return `<div class="cc${e?(e.locked?' on locked':' on'):''}">${txt}</div>`;};
+  const compass=`<div class="compass">`+
+    `<div class="cc"></div>${cc('north','北')}<div class="cc"></div>`+
+    `${cc('west','西')}<div class="cc mid">◆</div>${cc('east','东')}`+
+    `<div class="cc"></div>${cc('south','南')}<div class="cc"></div></div>`;
+  const chips=exits.map(e=>`<span class="ec${e.locked?' locked':''}" ${e.locked?'':`data-go="${e.dir}"`}>`+
+    `${DIR_CN[e.dir]||e.dir}${e.locked?' 🔒':''}</span>`).join('') || '<span class="ec locked">无出口</span>';
+  b.innerHTML=`<div class="loc-name">${esc2(sc.room||'')}</div>${compass}<div class="exit-chips">${chips}</div>`;
+}
+// ── 右栏：场景对象（筛选 + 距离）──
+const SO_ICON={container:'📦',npc:'🧍',scenery:'🗿',document:'📜',item:'🎒','陈设':'🪵','生物':'☠'};
+let sceneFilter='全部';
+function renderSceneObjects(P){
+  const fb=$('#scene-filter'), b=$('#scene-body'); if(!b) return;
+  const objs=(P&&P.scene&&P.scene.objects)||[];
+  ['全部','可交互','生物','地形','其他'].forEach;
+  fb.innerHTML=['全部','可交互','生物','地形','其他'].map(c=>`<span class="sf${c===sceneFilter?' active':''}" data-cat="${c}">${c}</span>`).join('');
+  const list=objs.filter(o=>sceneFilter==='全部'||o.cat===sceneFilter);
+  if(!list.length){ b.innerHTML='<div class="pempty">这一带没什么东西</div>'; return; }
+  const shown=list.slice(0,8);
+  b.innerHTML=shown.map(o=>{
+    const icon=SO_ICON[o.kind]||SO_ICON[o.cat]||'·';
+    const ecls=o.cat==='生物'?(' enemy'+(o.state==='hostile'?' hostile':'')):'';
+    return `<div class="so-row${ecls}" data-name="${esc2(o.name)}"><span class="so-ic">${icon}</span>`+
+      `<span class="so-nm">${esc2(o.name)}<i class="so-cat">${esc2(o.cat)}</i></span>`+
+      `<span class="so-d">${esc2(o.dist||'')}</span></div>`;
+  }).join('')+(list.length>shown.length?`<div class="so-more">共 ${list.length} 项</div>`:'');
+}
+// ── 右栏：环境状态 ──
+function renderEnvironment(P){
+  const b=$('#env-body'); if(!b) return;
+  const e=(P&&P.environment)||{};
+  const ev=(l,v)=>`<div class="ev"><span class="lbl">${l}</span><span class="val">${esc2(v||'—')}</span></div>`;
+  b.innerHTML=ev('天气',e.weather)+ev('时间',e.phase)+ev('天数', e.day?('第 '+e.day+' 天'):'—');
+}
+// ── 中栏底：常用指令（按出口/场景动态生成）──
+function renderQuickCmds(P){
+  const b=$('#quickcmds'); if(!b) return;
+  const sc=(P&&P.scene)||{}; const chips=[];
+  (sc.exits||[]).filter(e=>!e.locked).slice(0,3).forEach(e=>chips.push({l:'移动',t:`向${DIR_CN[e.dir]||e.dir}走`}));
+  const obj=(sc.objects||[]).find(o=>o.cat!=='生物');
+  if(obj) chips.push({l:'调查',t:`查看${obj.name}`});
+  chips.push({l:'',t:'观察四周'});
+  b.innerHTML=chips.map(c=>`<span class="qc" data-text="${esc2(c.t)}">${c.l?`<span class="qlabel">${c.l}</span>`:''}${esc2(c.t)}</span>`).join('')
+    +`<span class="qc" data-open="inventory"><span class="qlabel">面板</span>打开背包</span>`;
+}
+// ── 右栏：快捷意图（静态，开局渲染一次）──
+const QUICK_INTENTS=[
+  {t:'观察四周', send:'我观察四周，留意有什么异样'},
+  {t:'搜索周边', send:'我搜索周边，找找有没有遗漏的东西'},
+  {t:'休息整备', send:'我就地歇口气，整备一下'},
+  {t:'出声呼叫', send:'我出声呼叫，看有没有人回应'},
+  {t:'打开背包', open:'inventory'},
+  {t:'查看技能', open:'skills'},
+  {t:'查看任务', open:'quest'},
+  {t:'查看场地', open:'board'},
+];
+function renderQuickIntents(){
+  const b=$('#quickintents'); if(!b) return;
+  b.innerHTML=QUICK_INTENTS.map(q=>q.send?`<button data-text="${esc2(q.send)}">${q.t}</button>`
+    :`<button data-open="${q.open}">${q.t}</button>`).join('');
 }
 
 // ── 输入交互 ──
@@ -518,8 +686,37 @@ function submit(){ const t=$('#input').value.trim(); if(!t||busy) return; $('#in
 $('#submit').onclick=submit;
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();submit();} });
 
+// ── 面板交互：快捷意图 / 常用指令 / 出口 / 场景对象 / 会话工具 ──
+function fillInput(t){ const i=$('#input'); i.value=t; i.focus(); }
+function panelAction(el){
+  if(!el) return false;
+  if(el.dataset.text){ if(!busy) sendTurn(el.dataset.text); return true; }
+  if(el.dataset.open){ toggleDrawer(el.dataset.open); return true; }
+  if(el.dataset.go){ if(!busy) sendTurn(`向${DIR_CN[el.dataset.go]||el.dataset.go}走`); return true; }
+  return false;
+}
+$('#quickintents').onclick=e=>panelAction(e.target.closest('button'));
+$('#quickcmds').onclick=e=>panelAction(e.target.closest('.qc'));
+$('#loc-body').onclick=e=>panelAction(e.target.closest('[data-go]'));
+$('#scene-body').onclick=e=>{
+  const row=e.target.closest('.so-row'); if(row) fillInput(`查看${row.dataset.name}`);
+};
+$('#scene-filter').onclick=e=>{
+  const sf=e.target.closest('.sf'); if(!sf) return;
+  sceneFilter=sf.dataset.cat; renderSceneObjects(window.PANELS);
+};
+$('#clearlog').onclick=()=>{ stage.innerHTML=''; };
+$('#sesstools').onclick=e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  const act=b.dataset.act;
+  if(act==='save') saveSession();
+  else if(act==='resume') openSessionMenu();
+  else if(act==='clear'){ if(confirm('清空当前叙事显示？（不影响存档）')) stage.innerHTML=''; }
+  else if(act==='settings') addSystem('设置面板还没做——目前可用顶栏「会话 ▾」管理存档。','');
+};
+renderQuickIntents();
+
 // ── 侧栏面板：背包 / 技能 / 任务 / 地图（只读看板）──
-const esc2 = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const TITLES = {inventory:'背包', skills:'技能', quest:'任务', map:'地图', board:'场地'};
 const SKILL_KIND = {passive:'被动常驻', active:'主动施放', reactive:'反应触发'};
 let drawerTab = null;
@@ -527,6 +724,8 @@ let drawerTab = null;
 async function loadPanels(){
   try{ const r = await fetch('/panels'); window.PANELS = await r.json(); }
   catch(e){ return; }
+  const P=window.PANELS;
+  if(P && P.started){ renderLocation(P); renderSceneObjects(P); renderEnvironment(P); renderQuickCmds(P); }
   if(drawerTab && $('#drawer').classList.contains('open')) renderDrawer(drawerTab);
 }
 function openDrawer(tab){
