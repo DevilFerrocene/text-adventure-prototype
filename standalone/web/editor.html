@@ -343,13 +343,29 @@ function newWorld(){
   toast("已新建世界草稿——保存后写入 worlds/"+name+".json");
 }
 
+function worldExists(name){ return [...document.querySelectorAll("#world-sel option")].some(o=>o.value===name); }
+function flashSave(msg,ok){
+  const b=$("#btn-save"); b.disabled=false; b.textContent=msg;
+  b.style.background=ok?"var(--green)":"var(--red)"; b.style.borderColor=b.style.background;
+  clearTimeout(flashSave._t);
+  flashSave._t=setTimeout(()=>{ b.textContent="保存"; b.style.background=""; b.style.borderColor=""; },1800);
+}
 async function saveWorld(){
   if(!W) return;
-  const r=await api("POST","/editor/world/"+encodeURIComponent(curName),W);
-  if(!r.ok){ toast(r.error); return; }
-  await loadWorldList(r.name); curName=r.name; editable=true;
-  showProblems(r.problems);
-  toast(r.problems.length? `已保存（${r.problems.length} 处校验警告）` : "已保存 ✓");
+  if(worldExists(curName)){     // 已存在 → 覆盖前确认（内置则说明是写覆盖层、可还原）
+    const msg = editable
+      ? `覆盖已保存的世界「${curName}」？此操作会写回 worlds/${curName}.json。`
+      : `「${curName}」是内置世界。保存会写一份 JSON 覆盖层接管它（之后删除该世界即可还原内置）。继续？`;
+    if(!confirm(msg)) return;
+  }
+  const b=$("#btn-save"); b.disabled=true; b.textContent="保存中…";
+  try{
+    const r=await api("POST","/editor/world/"+encodeURIComponent(curName),W);
+    if(!r.ok){ flashSave("保存失败",false); toast(r.error); return; }
+    await loadWorldList(r.name); curName=r.name; editable=true;
+    showProblems(r.problems);
+    flashSave(r.problems.length?`已保存·${r.problems.length} 警告`:"已保存 ✓", true);
+  }catch(e){ flashSave("保存失败",false); toast("保存出错："+(e&&e.message||e)); }
 }
 async function saveAs(){
   if(!W) return;
@@ -367,13 +383,15 @@ async function validateNow(){
 }
 async function playtest(){
   if(!W) return;
-  // 先保存（试玩的是已注册世界）
-  const r=await api("POST","/editor/world/"+encodeURIComponent(curName),W);
-  if(!r.ok){ toast("试玩前需先保存："+r.error); return; }
-  await loadWorldList(r.name); curName=r.name;
-  const p=await api("POST","/editor/playtest/"+encodeURIComponent(r.name));
-  if(!p.ok){ toast(p.error); return; }
-  window.location.href=p.play_url||"/";
+  try{
+    // 先保存（试玩的是已注册世界）
+    const r=await api("POST","/editor/world/"+encodeURIComponent(curName),W);
+    if(!r.ok){ toast("试玩前需先保存："+r.error); return; }
+    await loadWorldList(r.name); curName=r.name;
+    const p=await api("POST","/editor/playtest/"+encodeURIComponent(r.name));
+    if(!p.ok){ toast(p.error); return; }
+    window.location.href=p.play_url||"/";
+  }catch(e){ toast("试玩出错："+(e&&e.message||e)); }
 }
 
 function showProblems(problems){
