@@ -158,6 +158,17 @@ class PanelsPayloadTest(unittest.TestCase):
         b = panels_payload()["board"]
         self.assertEqual(tuple(b["player"].values()), (3, 1))   # 棋盘随走位更新
 
+    def test_board_shows_enemy_token_with_state(self):
+        st = mcp_server.SESSION.state
+        st.position = "plains"
+        st.enemy_field = [{"uid": "fe_t", "enemy_id": "killer_rabbit",
+                           "cell": [4, 4], "sight": 2, "aggro": 0, "state": "idle"}]
+        toks = panels_payload()["board"]["tokens"]
+        enemy = [t for t in toks if t["kind"] == "enemy"]
+        self.assertEqual(len(enemy), 1)
+        self.assertEqual(enemy[0]["state"], "idle")
+        self.assertEqual((enemy[0]["x"], enemy[0]["y"]), (4, 4))
+
     def test_map_current_room_and_floor_scope(self):
         p = panels_payload()
         rooms = p["map"]["rooms"]

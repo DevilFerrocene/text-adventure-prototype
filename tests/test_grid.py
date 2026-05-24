@@ -7,6 +7,7 @@
 - 无 grid 的房间：一律视为"满屋皆在手边"，零门控（向后兼容）。
 """
 import unittest
+from unittest.mock import patch
 
 from core.types import RoomGrid
 import mcp_server as m
@@ -256,6 +257,109 @@ class PointOfInterestTest(unittest.TestCase):
         self.assertFalse(m.SESSION.state.flags.get("_poi_plains_glint"))
         m.load_game("poi_test")
         self.assertTrue(m.SESSION.state.flags.get("_poi_plains_glint"))  # 已揭示状态恢复
+
+
+class EnemyFieldVisionTest(unittest.TestCase):
+    """敌人上棋盘：刷怪给坐标、默认摆视野外（idle）；走进视野→仇恨拉满、自动进战；墙挡视线。"""
+
+    def setUp(self):
+        self.assertTrue(m.start_game("aincrad")["ok"])
+
+    def tearDown(self):
+        if m.SESSION.in_combat:
+            m.end_combat(reason="t")
+
+    def _put(self, eid, cell, sight, state="idle"):
+        st = m.SESSION.state
+        st.active_spawns = [eid]
+        st.enemy_field = [{"uid": "fe_t", "enemy_id": eid, "cell": list(cell),
+                           "sight": sight, "aggro": 0, "state": state}]
+
+    def test_move_places_enemy_on_field_idle_out_of_sight(self):
+        with patch("mcp_server._roll_spawns", return_value=["killer_rabbit"]):
+            m.move("north")                                 # camp → plains
+        st = m.SESSION.state
+        self.assertEqual(len(st.enemy_field), 1)
+        self.assertEqual(st.enemy_field[0]["enemy_id"], "killer_rabbit")
+        self.assertEqual(st.enemy_field[0]["state"], "idle")
+        self.assertEqual(st.active_spawns, ["killer_rabbit"])     # 与花名册同步
+        self.assertFalse(m.SESSION.in_combat)                     # 摆在视野外，没当场进战
+        # 摆放距离 > sight（看不见才对）
+        d = m._cheb(tuple(st.cell), tuple(st.enemy_field[0]["cell"]))
+        self.assertGreater(d, st.enemy_field[0]["sight"])
+
+    def test_scene_shows_enemy_bearing_and_awareness(self):
+        st = m.SESSION.state
+        st.position = "plains"; st.cell = (0, 0)
+        self._put("killer_rabbit", (4, 4), sight=2)
+        around = m.get_scene()["scene"]["grid"]["around"]
+        e = [x for x in around if "兔" in x["name"]]
+        self.assertTrue(e)
+        self.assertIn("未察觉", e[0]["name"])               # idle = 未察觉
+        self.assertIn(e[0]["bearing"], m._BEARINGS_8)
+
+    def test_approach_into_sight_auto_engages(self):
+        st = m.SESSION.state
+        st.position = "plains"; st.cell = (0, 0)
+        self._put("killer_rabbit", (2, 3), sight=5)         # 大视野，靠近宝箱必被看见
+        r = m.approach("宝箱")                               # field_chest @ (2,4)
+        self.assertTrue(r["ok"])
+        self.assertIn("spotted", r)
+        self.assertTrue(m.SESSION.in_combat)                # 进视野 → 自动进战
+        self.assertEqual(st.enemy_field[0]["state"], "hostile")
+
+    def test_stay_out_of_sight_no_combat(self):
+        st = m.SESSION.state
+        st.position = "plains"; st.cell = (0, 0)
+        self._put("killer_rabbit", (5, 5), sight=2)         # 远在对角
+        r = m.approach("树林")                               # west exit @ (0,2)，离敌很远
+        self.assertTrue(r["ok"])
+        self.assertNotIn("spotted", r)
+        self.assertFalse(m.SESSION.in_combat)               # 没进视野 = 溜过去了
+
+    def test_wall_blocks_line_of_sight(self):
+        st = m.SESSION.state
+        st.position = "labyrinth"
+        grid = m.SESSION.world.get_room("labyrinth").grid
+        self._put("shadow_lurker", (2, 1), sight=5)
+        st.cell = (0, 1)                                    # (1,1) 是廊柱(blocked)，挡在中间
+        self.assertFalse(m._enemy_sees_player(st, grid, st.enemy_field[0]))
+        st.cell = (2, 2)                                    # 紧挨敌人、无墙阻隔
+        self.assertTrue(m._enemy_sees_player(st, grid, st.enemy_field[0]))
+
+    def test_idle_enemy_not_seeing_yields_no_spot(self):
+        st = m.SESSION.state
+        st.position = "plains"; st.cell = (0, 0)
+        self._put("killer_rabbit", (5, 0), sight=2)
+        self.assertEqual(m._check_enemy_vision(m.SESSION.world, st,
+                         m.SESSION.world.get_room("plains")), [])
+
+    def test_end_combat_clears_enemy_field(self):
+        st = m.SESSION.state
+        st.position = "plains"
+        self._put("killer_rabbit", (2, 3), sight=2)
+        m.request_combat(reason="开打")
+        m.end_combat(reason="清场")
+        self.assertEqual(st.enemy_field, [])
+
+    def test_enemy_field_round_trips_through_save(self):
+        st = m.SESSION.state
+        st.position = "plains"
+        self._put("killer_rabbit", (4, 4), sight=2, state="hostile")
+        m.save_game("ef_test")
+        m.start_game("aincrad")
+        self.assertEqual(m.SESSION.state.enemy_field, [])
+        m.load_game("ef_test")
+        self.assertEqual(len(m.SESSION.state.enemy_field), 1)
+        self.assertEqual(m.SESSION.state.enemy_field[0]["state"], "hostile")
+
+    def test_poi_ambush_places_hostile_field_enemy(self):
+        st = m.SESSION.state
+        st.position = "forest_edge"; st.cell = (2, 2)
+        m.approach("兽臊")                                   # 伏击点
+        self.assertTrue(st.enemy_field)
+        self.assertEqual(st.enemy_field[0]["state"], "hostile")
+        self.assertEqual(st.enemy_field[0]["enemy_id"], "gale_wolf")
 
 
 class CellPersistenceTest(unittest.TestCase):

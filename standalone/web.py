@@ -310,6 +310,12 @@ def _board_payload(world, st) -> dict | None:
     # 探索点：未揭示的画成 ?（只给 hint，payload 不外泄）
     for p in mcp_server._active_pois(st, grid):
         tokens.append({"x": p.cell[0], "y": p.cell[1], "name": p.hint, "kind": "poi"})
+    # 敌人：棋盘上的怪，带察觉状态（idle 未察觉 / hostile 已锁定）
+    for fe in st.enemy_field:
+        tmpl = world.get_enemy(fe["enemy_id"])
+        tokens.append({"x": fe["cell"][0], "y": fe["cell"][1],
+                       "name": (tmpl.name if tmpl else fe["enemy_id"]),
+                       "kind": "enemy", "state": fe.get("state", "idle")})
     px, py = st.cell
     return {
         "room": room.name if room else st.position,

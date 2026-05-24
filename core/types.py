@@ -427,6 +427,10 @@ class GameState:
     active_spawns: List[str] = field(default_factory=list)
     # 二维棋盘：玩家在当前房间棋盘上的格子 (x,y)。进房时落到 grid.entry；无 grid 的房间忽略。
     cell: Tuple[int, int] = (0, 0)
+    # 敌人在棋盘上的空间层（与 active_spawns 平行、同一批敌人，额外带坐标/视野/仇恨）。
+    # 每项 dict：{uid, enemy_id, cell:[x,y], sight, aggro:int, state:"idle"|"hostile"}。
+    # 只在挂了 grid 的刷怪场用；进入空格敌人视野→自动进战。离房/战斗结束清空。
+    enemy_field: List[dict] = field(default_factory=list)
 
     def has_item(self, item_id: str) -> bool:
         return any(i.id == item_id for i in self.inventory)
@@ -796,6 +800,9 @@ class EnemyTemplate:
     # 刷怪权重：刷怪场从池里抽怪时的相对权重（默认 1.0）。设大让弱怪/教学怪占多数，
     # 设小让硬怪稀有——别让 6 血新手第一脚就踩到精英。
     spawn_weight: float = 1.0
+    # 视野半径（格）：玩家走进它视野（切比雪夫≤sight 且墙不挡）→ 被发现、自动进战。
+    # 大=警觉的猎食者（狼）、小=迟钝/打盹的（啃草的兔）。0=不主动发现（纯被动等人打）。
+    sight: int = 3
     # §14 战术站位（仅 tactical 战斗生效；默认 rank0/reach99/无破防条=旧行为）
     rank: int = 0                   # 列阵位：0=最前排
     reach: int = 99                 # 触及排数（近战=1，长柄=2，远程/法术=99）

@@ -377,6 +377,8 @@ def _spatial_overview(world, state, room) -> Optional[dict]:
     # 探索点：只给 hint（明面），绝不含 payload——GM 看不到是啥
     for p in _active_pois(state, grid):
         entries.append((p.hint, "未探明", tuple(p.cell)))
+    # 敌人：棋盘上的怪，带方位/距离 + 察觉状态（未察觉/已锁定）
+    entries += _field_enemy_entries(world, state)
 
     at_hand, around = [], []
     for nm, cat, cell in entries:
@@ -448,11 +450,119 @@ def _reveal_poi(world, state, poi) -> dict:
         improvised = [e for e in enemies if isinstance(e, dict)]
         if canon:
             state.active_spawns = list(canon)          # 在场敌人；GM 随后 request_combat() 不带参即打
+            # 伏击：把怪贴着玩家摆上棋盘、直接 hostile（就在脸前炸出来）
+            grid = _room_grid(world.get_room(state.position))
+            state.enemy_field = []
+            if grid:
+                occ = _grid_occupied(grid)
+                spots = [n for n in _grid_neighbors(tuple(state.cell))
+                         if _grid_standable(grid, n, occ)] or [tuple(state.cell)]
+                for i, eid in enumerate(canon):
+                    tmpl = world.get_enemy(eid)
+                    c = spots[i % len(spots)]
+                    state.enemy_field.append({
+                        "uid": f"fe_amb_{state.turn}_{i}", "enemy_id": eid,
+                        "cell": [c[0], c[1]], "sight": getattr(tmpl, "sight", 3) if tmpl else 3,
+                        "aggro": 100, "state": "hostile"})
             out["ambush"] = {"enemies": canon, "enemy_profiles": _enemy_profiles_for_scene(state)}
         elif improvised:
             out["ambush"] = {"improvised": improvised}  # GM: request_combat(improvised=...)
 
     _autosave()
+    return out
+
+
+# ── 敌人空间层：棋盘坐标 + 视野 + 仇恨（进入视野自动进战）────────────────
+def _los_clear(grid, a, b) -> bool:
+    """a→b 视线是否不被 blocked 墙挡（Bresenham 走中间格）。无 blocked 永远通。"""
+    blocked = {tuple(c) for c in grid.blocked}
+    if not blocked:
+        return True
+    (x0, y0), (x1, y1) = tuple(a), tuple(b)
+    dx, dy = abs(x1 - x0), abs(y1 - y0)
+    sx, sy = (1 if x0 < x1 else -1), (1 if y0 < y1 else -1)
+    err, x, y = dx - dy, x0, y0
+    while (x, y) != (x1, y1):
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy; x += sx
+        if e2 < dx:
+            err += dx; y += sy
+        if (x, y) != (x1, y1) and (x, y) in blocked:
+            return False
+    return True
+
+
+def _place_field_enemies(state, room, enemy_ids) -> None:
+    """把刷到的敌人放上棋盘（与 active_spawns 同步）。默认放在玩家【视野外】的可站格，
+    给"隔着野地先看见它"的余地；放不下才退而求其次。无 grid 则只设 active_spawns（旧抽象）。"""
+    state.active_spawns = list(enemy_ids)
+    state.enemy_field = []
+    grid = _room_grid(room)
+    if not grid or not enemy_ids:
+        return
+    occ = _grid_occupied(grid)
+    poi_cells = {tuple(p.cell) for p in _active_pois(state, grid)}
+    pcell = tuple(state.cell)
+    taken = {pcell} | poi_cells
+    world = SESSION.world
+    for i, eid in enumerate(enemy_ids):
+        tmpl = world.get_enemy(eid)
+        sight = getattr(tmpl, "sight", 3) if tmpl else 3
+        cands = [(x, y) for x in range(grid.width) for y in range(grid.height)
+                 if _grid_standable(grid, (x, y), occ) and (x, y) not in taken]
+        if not cands:
+            break
+        far = [c for c in cands if _cheb(pcell, c) > max(1, sight)]
+        cell = random.choice(far or cands)
+        taken.add(cell)
+        state.enemy_field.append({
+            "uid": f"fe_{state.turn}_{i}", "enemy_id": eid, "cell": [cell[0], cell[1]],
+            "sight": int(sight), "aggro": 0, "state": "idle"})
+
+
+def _populate_spawns(state, room, chance=None) -> list:
+    """进入/搜寻刷怪场：掷一把刷怪 + 把刷到的摆上棋盘。返回 enemy id 列表。"""
+    ids = _roll_spawns(room) if chance is None else _roll_spawns(room, chance=chance)
+    _place_field_enemies(state, room, ids)
+    return ids
+
+
+def _enemy_sees_player(state, grid, fe) -> bool:
+    """这只 idle 敌人此刻能不能看见玩家（切比雪夫≤sight 且墙不挡）。"""
+    if fe.get("state") != "idle":
+        return False
+    sight = int(fe.get("sight", 3))
+    if sight <= 0:
+        return False
+    return _cheb(tuple(fe["cell"]), tuple(state.cell)) <= sight and \
+        _los_clear(grid, tuple(fe["cell"]), tuple(state.cell))
+
+
+def _check_enemy_vision(world, state, room) -> list:
+    """玩家移动后查敌人视野：idle 敌人看见玩家 → 转 hostile（仇恨拉满）。
+    返回被惊动敌人的名字列表（空=没被发现，可继续潜行/绕路）。开战由调用方据此触发。"""
+    grid = _room_grid(room)
+    if not grid or not state.enemy_field:
+        return []
+    spotted = []
+    for fe in state.enemy_field:
+        if _enemy_sees_player(state, grid, fe):
+            fe["state"] = "hostile"
+            fe["aggro"] = 100
+            tmpl = world.get_enemy(fe["enemy_id"])
+            spotted.append(tmpl.name if tmpl else fe["enemy_id"])
+    return spotted
+
+
+def _field_enemy_entries(world, state):
+    """棋盘上敌人的 (显示名, cat, cell)——供 _spatial_overview 织进方位/距离。"""
+    out = []
+    for fe in state.enemy_field:
+        tmpl = world.get_enemy(fe["enemy_id"])
+        nm = (tmpl.name if tmpl else fe["enemy_id"])
+        tag = "·已锁定" if fe.get("state") == "hostile" else "·未察觉"
+        out.append((nm + tag, "敌", tuple(fe["cell"])))
     return out
 
 
@@ -1241,9 +1351,9 @@ def start_game(world: str = "aincrad") -> dict:
     )
 
     SESSION = Session(world_name=world, world=new_world, state=new_state)
-    # 刷怪：若开局房间就是刷怪场，进场即刷一把（aincrad 开局在安全营地，通常为空）
-    new_state.active_spawns = _roll_spawns(new_world.get_room(new_state.position))
-    new_state.cell = _entry_cell(new_world.get_room(new_state.position))  # 二维棋盘落点
+    new_state.cell = _entry_cell(new_world.get_room(new_state.position))  # 先定棋盘落点
+    # 刷怪：若开局房间就是刷怪场，进场即刷一把并摆上棋盘（aincrad 开局在安全营地，通常为空）
+    _populate_spawns(new_state, new_world.get_room(new_state.position))
     _autosave()  # 新开局立即落盘，覆盖旧 autosave（防进程重启误恢复到上一局）
 
     scene = _room_snapshot(new_world, new_state)
@@ -3399,12 +3509,16 @@ def scout_area() -> dict:
         return {"ok": True, "spawned": list(state.active_spawns), "rerolled": False,
                 "enemy_profiles": _enemy_profiles_for_scene(state),
                 "note": "已经有目标在场了，先解决它。"}
-    state.active_spawns = _roll_spawns(room, chance=HUNT_SPAWN_CHANCE)
+    _populate_spawns(state, room, chance=HUNT_SPAWN_CHANCE)   # 刷 + 摆上棋盘（默认放在视野外）
     _autosave()  # 主动搜寻改了在场敌人，落盘（与 move 一致）
     result = {"ok": True, "spawned": list(state.active_spawns), "rerolled": True}
     if state.active_spawns:
         result["enemy_profiles"] = _enemy_profiles_for_scene(state)
         result["note"] = "搜到目标。"
+        spotted = _check_enemy_vision(SESSION.world, state, room)   # 搜的同时就撞进视野？
+        if spotted and not SESSION.in_combat:
+            rc = request_combat(reason=f"你刚拨开草，{'、'.join(spotted)}已经盯上了你")
+            result["spotted"], result["combat"] = spotted, rc
     else:
         result["note"] = "这一带暂时没动静，可再搜或换个地方。"
     return result
@@ -3694,6 +3808,7 @@ def end_combat(reason: str = "") -> dict:
     SESSION.encounter = None
     # 刷怪场：战斗了结，在场敌人清空（要再遇敌就走出去重新进场刷一把）
     state.active_spawns = []
+    state.enemy_field = []                         # 棋盘上的敌人一并清掉
     # 非刷怪场（Boss/固定遭遇）：胜利后标记此房已清，别再在 get_scene 里阴魂不散
     cur_room = SESSION.world.get_room(state.position)
     if victory and cur_room and not _is_spawn_ground(cur_room):
@@ -3717,6 +3832,7 @@ def _respawn_player(reason: str = "") -> dict:
     state.cell = _entry_cell(SESSION.world.get_room(respawn_room))  # 二维棋盘落点
     SESSION.encounter = None                     # 清战斗
     state.active_spawns = []                      # 回到安全点，清在场刷怪
+    state.enemy_field = []                         # 棋盘上的敌人一并清掉
     _autosave()
     room = SESSION.world.get_room(respawn_room)
     return {
@@ -4450,8 +4566,8 @@ def move(direction: str) -> dict:
     state.cell = _entry_cell(new_room)        # 二维棋盘：进新房落到 entry（无 grid=忽略）
     expired = _advance_turn(state)
 
-    # ── 刷怪：进入新房间随机刷一把（刷怪场才刷；其余房间清空在场敌人）──
-    state.active_spawns = _roll_spawns(new_room)
+    # ── 刷怪：进入新房间随机刷一把并摆上棋盘（刷怪场才刷；其余房间清空在场敌人）──
+    _populate_spawns(state, new_room)
 
     # ── 进入新房间：应用 RoomSnapshot 或 on_first_enter ──
     snapshot_applied = _apply_room_snapshot(world, state, new_room)
@@ -4482,6 +4598,11 @@ def move(direction: str) -> dict:
         result["enemy_profiles"] = _enemy_profiles_for_scene(state)
     if reactive_fired:
         result["reactive_fired"] = reactive_fired
+    # 视野：进门时若有敌人一眼就瞧见你（多半摆在视野外，故通常不触发）→ 自动进战
+    spotted = _check_enemy_vision(world, state, new_room)
+    if spotted and not SESSION.in_combat:
+        rc = request_combat(reason=f"你一脚踏进来，{'、'.join(spotted)}当场发现了你")
+        result["spotted"], result["combat"] = spotted, rc
     return result
 
 
@@ -4533,6 +4654,12 @@ def approach(target: str) -> dict:
         if poi is not None:
             result["revealed"] = _reveal_poi(world, state, poi)
             result["note"] = "你走到那处，凑近一看——"
+    # 视野：这一步若踏进某只 idle 敌人的视野 → 它锁定你、自动进战
+    if not SESSION.in_combat:
+        spotted = _check_enemy_vision(world, state, room)
+        if spotted:
+            rc = request_combat(reason=f"你刚靠近，{'、'.join(spotted)}发现了你")
+            result["spotted"], result["combat"] = spotted, rc
     result["scene"] = _room_snapshot(world, state)
     _autosave()
     return result
@@ -5512,6 +5639,7 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
         "pending_contract": state.pending_contract,   # §12：未消费的危机合约
         "active_spawns": state.active_spawns,          # 刷怪：当前在场敌人
         "cell": list(state.cell),                      # 二维棋盘：玩家在房间棋盘上的格
+        "enemy_field": state.enemy_field,              # 敌人空间层（坐标/视野/仇恨）
         "player_attrs": state.player_attrs,
         "world_attrs": state.world_attrs,
     }
@@ -5643,6 +5771,7 @@ def _session_from_data(data: dict) -> Optional[Session]:
         pending_contract=data.get("pending_contract"),   # §12
         active_spawns=data.get("active_spawns", []),      # 刷怪：当前在场敌人
         cell=tuple(data.get("cell", (0, 0))),             # 二维棋盘格
+        enemy_field=data.get("enemy_field", []),          # 敌人空间层
         player_attrs=_clean_custom_attributes(data.get("player_attrs", {})),
         world_attrs=_clean_custom_attributes(data.get("world_attrs", {})),
     )
