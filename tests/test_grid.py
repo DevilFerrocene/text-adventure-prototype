@@ -391,6 +391,21 @@ class GridCombatTest(unittest.TestCase):
         self.assertIsNotNone(e.cell)
         self.assertTrue(enc.action_economy)          # 棋盘战斗自动开行动经济
 
+    def test_snapshot_exposes_exact_coords_to_gm(self):
+        enc, p, e = self._fight("killer_rabbit", (5, 3))
+        snap = m._encounter_snapshot()
+        self.assertIn("battlefield", snap)
+        self.assertIn("@(", snap["battlefield"])     # 形如 你@(0,3)；杀人兔@(5,3)
+        self.assertIn("coords_axis", snap)
+        self.assertTrue(all("cell" in c for c in snap["combatants"]))
+
+    def test_rank_combat_has_no_battlefield(self):
+        st = m.SESSION.state
+        st.position = "camp"; st.enemy_field = []     # 非刷怪场、无 field → rank 抽象
+        m.start_combat(canon=["frenzy_boar"])
+        snap = m._encounter_snapshot()
+        self.assertNotIn("battlefield", snap)         # rank 战斗不给坐标
+
     def test_no_field_falls_back_to_rank_mode(self):
         st = m.SESSION.state
         st.position = "camp"                          # 非刷怪场（不触发反幻怪守卫），且无 enemy_field

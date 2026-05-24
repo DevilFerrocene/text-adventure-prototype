@@ -501,6 +501,9 @@ async def combat_move(request: Request) -> JSONResponse:
         note = f"玩家在战斗中点棋盘走位（{steps or '若干'} 步）。"
         if out["combat_log"]:
             note += "（其间：" + "；".join(out["combat_log"]) + "）"
+        bf = mcp_server._battlefield_text(s.encounter)
+        if bf:
+            note += f" 当前战场精确坐标：{bf}。"
         _get_agent().note_event(note)
     return JSONResponse(out)
 
@@ -524,6 +527,9 @@ async def move_cell(request: Request) -> JSONResponse:
                 note += "（伏击，已进入战斗）"
         if res.get("spotted"):
             note += f" {('、'.join(res['spotted']))} 发现了他，已进入战斗。"
+        bf = mcp_server._battlefield_text(mcp_server.SESSION.encounter)
+        if bf:
+            note += f" 当前战场精确坐标：{bf}。"
         _get_agent().note_event(note)
     return JSONResponse(res)
 

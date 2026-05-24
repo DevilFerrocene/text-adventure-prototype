@@ -626,6 +626,20 @@ def _combat_is_cellmode(enc) -> bool:
     return any(c.cell is not None for c in enc.combatants.values())
 
 
+def _battlefield_text(enc) -> str:
+    """战场精确坐标一行：'你@(0,3)；疾风狼@(5,1)…'。棋盘战斗专属——给 GM 精确报位，
+    好让它据此叙事走位/方向、调度敌人。非棋盘战斗返回空串。"""
+    if enc is None or not _combat_is_cellmode(enc):
+        return ""
+    parts = []
+    for cid, c in enc.combatants.items():
+        if c.cell is None or c.is_dead:
+            continue
+        who = "你" if cid == "player" else c.name
+        parts.append(f"{who}@({c.cell[0]},{c.cell[1]})")
+    return "；".join(parts)
+
+
 def _combat_dist(a, b) -> int:
     """两 combatant 距离：都有 cell → 切比雪夫格距；否则旧的 rank 之和（gap）。"""
     if a.cell is not None and b.cell is not None:
@@ -3322,6 +3336,10 @@ def _encounter_snapshot() -> dict:
         "recent_events": recent,
         "combat_hud": _build_combat_hud(enc),
     }
+    # 棋盘战斗：把精确战场坐标喂给 GM（战斗专属——探索态仍只给方位/距离）
+    if _combat_is_cellmode(enc):
+        snap["battlefield"] = _battlefield_text(enc)
+        snap["coords_axis"] = "x东+/y南+（行号自上而下，顶=北）"
     # §14-R2：战术模式额外暴露行动经济，让 GM 知道列阵规模 + 当前行动者剩余动作槽
     if enc.action_economy:
         snap["action_economy"] = True
