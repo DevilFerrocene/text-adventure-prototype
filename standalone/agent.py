@@ -72,6 +72,24 @@ class GameAgent:
         # 再压缩时整体重算，避免提要无限增长）。messages[0] = _base_system [+ RECAP + 提要]。
         self._base_system = load_system_prompt(self.rich_ui)
         self.messages = [{"role": "system", "content": self._base_system}]
+        # 引擎旁路事件（玩家点棋盘走位等，已由引擎处理）攒在这里，下个回合注入 GM 上下文，
+        # GM 不必再操作、只需知情并保持叙事连贯。
+        self.pending_notes = []
+
+    def note_event(self, text: str):
+        """记一条"引擎已处理、需让 GM 知情"的旁路事件，下次回合注入上下文。"""
+        if text:
+            self.pending_notes.append(text)
+
+    def _flush_pending_notes(self):
+        if not self.pending_notes:
+            return
+        body = "\n".join(f"- {n}" for n in self.pending_notes)
+        self.pending_notes = []
+        # 用开场种子同款前缀，叙事流(_transcript)会跳过它，不当成玩家发言
+        self.messages.append({"role": "user", "content":
+            "（系统提示·非玩家发言）以下是玩家通过界面直接操作、引擎【已处理】的事件，"
+            "无需你再调用工具重做，仅供你知情并保持叙事连贯：\n" + body})
 
     def _history_chars(self) -> int:
         """粗估历史体量（字符数；中文≈token 同量级，够用来当压缩阈值）。"""
@@ -182,6 +200,7 @@ class GameAgent:
 
         player_input 为空字符串时表示"开局"（让 GM 自己起手 start_game + 开场）。
         """
+        self._flush_pending_notes()   # 先把引擎旁路事件（点击走位等）注入上下文
         if player_input:
             self.messages.append({"role": "user", "content": player_input})
         self._compress_history()   # 回合开始先压缩，控住上下文体量
@@ -224,6 +243,7 @@ class GameAgent:
 
         只流"最终那轮叙事"；工具调用轮次不流（那不是给玩家看的）。
         """
+        self._flush_pending_notes()   # 先把引擎旁路事件（点击走位等）注入上下文
         if player_input:
             self.messages.append({"role": "user", "content": player_input})
         self._compress_history()   # 回合开始先压缩，控住上下文体量

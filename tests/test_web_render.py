@@ -3,8 +3,34 @@ import json
 import unittest
 
 import mcp_server
-from standalone.web import _render_events, hud_payload, panels_payload
+from standalone.web import _render_events, hud_payload, panels_payload, _transcript
 from standalone.prompt import load_system_prompt
+from standalone.agent import GameAgent
+from standalone.config import LLMConfig
+
+
+class EngineNoteInjectionTest(unittest.TestCase):
+    """引擎旁路操作（点击走位等）攒成注记，下回合注入 GM 上下文，但不当玩家发言显示。"""
+
+    def _agent(self):
+        return GameAgent(LLMConfig(api_key="x", base_url="http://x", model="m"))
+
+    def test_note_flushes_into_context_and_clears(self):
+        a = self._agent()
+        a.note_event("玩家点击棋盘自行走位（3 步），现在在草丛宝箱附近。")
+        a.note_event("途中揭示了探索点：半截磨尖的骨刺。")
+        a._flush_pending_notes()
+        self.assertEqual(a.pending_notes, [])                 # 注记已清空
+        last = a.messages[-1]
+        self.assertEqual(last["role"], "user")
+        self.assertIn("走位", last["content"])
+        self.assertIn("骨刺", last["content"])
+
+    def test_injected_note_not_shown_as_player_message(self):
+        a = self._agent()
+        a.note_event("玩家点击棋盘自行走位（2 步）。")
+        a._flush_pending_notes()
+        self.assertTrue(all("点击棋盘" not in t["text"] for t in _transcript(a.messages)))
 
 
 class RenderEventsTest(unittest.TestCase):

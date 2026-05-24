@@ -497,6 +497,11 @@ async def combat_move(request: Request) -> JSONResponse:
         out["combat_log"] = _combat_log_lines(res.get("events", []), names)
         out["hud"] = hud_payload()
         out["panels"] = panels_payload()
+        # 让 GM 知情（无需它再操作）：把这步走位 + 借机攻击注入下个回合上下文
+        note = f"玩家在战斗中点棋盘走位（{steps or '若干'} 步）。"
+        if out["combat_log"]:
+            note += "（其间：" + "；".join(out["combat_log"]) + "）"
+        _get_agent().note_event(note)
     return JSONResponse(out)
 
 
@@ -509,6 +514,17 @@ async def move_cell(request: Request) -> JSONResponse:
     if res.get("ok"):
         res["hud"] = hud_payload()
         res["panels"] = panels_payload()
+        # 让 GM 知情（无需它再操作）：把这步走位 + 揭示/进战注入下个回合上下文
+        locale = (((res.get("scene") or {}).get("grid") or {}) or {}).get("player_locale", "")
+        note = f"玩家点击棋盘自行走位（{res.get('steps', 0)} 步）" + (f"，现在{locale}" if locale else "") + "。"
+        rv = res.get("revealed")
+        if rv:
+            note += f" 途中揭示了探索点：{rv.get('reveal', '')}"
+            if rv.get("kind") == "ambush":
+                note += "（伏击，已进入战斗）"
+        if res.get("spotted"):
+            note += f" {('、'.join(res['spotted']))} 发现了他，已进入战斗。"
+        _get_agent().note_event(note)
     return JSONResponse(res)
 
 

@@ -164,6 +164,9 @@ class ActionEconomyTest(unittest.TestCase):
         # 敌人血量拉满，避免一刀斩杀提前结束遭遇
         thug = self.enc.combatants["enemy_frenzy_boar"]
         thug.hp = thug.max_hp = 999
+        # 玩家也拉满：boar reach=1，rank 模式下 retreat 会引发借机攻击，别让它偶尔打死玩家结束战斗
+        p = self.enc.combatants["player"]
+        p.hp = p.max_hp = 999
 
     def tearDown(self):
         if mcp_server.SESSION.in_combat:
