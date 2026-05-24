@@ -282,6 +282,8 @@ body{ display:block; align-items:stretch; height:100vh; overflow:hidden; }
 #topbar #tabs{display:flex}
 #topbar #sessbtn{cursor:pointer;color:var(--fg-dim);border:1px solid var(--line);border-radius:5px;padding:3px 10px}
 #topbar #sessbtn:hover{color:var(--fg);border-color:var(--fg-mute)}
+#topbar #editorbtn{text-decoration:none;color:var(--fg-dim);border:1px solid var(--line);border-radius:5px;padding:3px 10px;margin-right:8px}
+#topbar #editorbtn:hover{color:var(--amber);border-color:var(--amber)}
 #app{ display:grid; grid-template-columns:296px minmax(0,1fr) 326px; gap:14px;
   height:calc(100vh - 46px); padding:14px; box-sizing:border-box; max-width:1600px; margin:0 auto; }
 .col{ min-height:0; display:flex; flex-direction:column; gap:14px; }
@@ -390,6 +392,7 @@ body{ display:block; align-items:stretch; height:100vh; overflow:hidden; }
       <div class="tab" data-tab="map"><span>地图</span><span class="badge">M</span></div>
       <div class="tab" data-tab="board"><span>场地</span><span class="badge">B</span></div>
     </div>
+    <a class="mono" id="editorbtn" href="/editor">世界编辑器</a>
     <span class="mono" id="sessbtn">会话 ▾</span>
     <div id="sessmenu"></div>
   </div>

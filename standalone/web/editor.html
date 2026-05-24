@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>世界编辑器 · 文字冒险</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@200;300&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:oklch(0.155 0.012 55); --bg-soft:oklch(0.185 0.013 55); --panel:oklch(0.205 0.014 55);
+  --line:oklch(0.32 0.012 55); --line-soft:oklch(0.26 0.011 55);
+  --fg:oklch(0.92 0.012 80); --fg-dim:oklch(0.66 0.012 75); --fg-mute:oklch(0.48 0.011 70);
+  --amber:oklch(0.82 0.135 75); --cyan:oklch(0.80 0.085 215); --green:oklch(0.78 0.13 152);
+  --red:oklch(0.72 0.17 28); --violet:oklch(0.74 0.12 295);
+  --mono:'JetBrains Mono',ui-monospace,monospace; --sans:'Noto Sans SC',system-ui,sans-serif;
+  --serif:'Noto Serif SC',serif; --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;
+  display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.mono{font-family:var(--mono)}
+.label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute)}
+button,select,input,textarea{font-family:inherit;font-size:inherit;color:inherit}
+button{cursor:pointer;background:var(--panel);border:1px solid var(--line);border-radius:5px;
+  color:var(--fg-dim);padding:5px 11px;font-family:var(--mono);font-size:11.5px;
+  letter-spacing:.05em;transition:.15s var(--ease)}
+button:hover{color:var(--fg);border-color:var(--fg-mute)}
+button.pri{color:var(--bg);background:var(--amber);border-color:var(--amber);font-weight:500}
+button.pri:hover{filter:brightness(1.08)}
+button.danger:hover{color:var(--red);border-color:var(--red)}
+button:disabled{opacity:.4;cursor:not-allowed}
+
+/* 顶栏 */
+#top{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 14px;
+  border-bottom:1px solid var(--line-soft);background:var(--bg-soft)}
+#top .brand{font-family:var(--serif);font-size:17px;color:var(--fg)}
+#top .brand b{color:var(--amber);font-weight:300}
+#top select{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:5px 9px;
+  font-family:var(--mono);font-size:12px;min-width:150px}
+#top .sp{flex:1}
+#top a.play{text-decoration:none}
+
+/* 主体：左 tabs + 中列表 + 右表单 */
+#main{flex:1;display:flex;min-height:0}
+#tabs{flex:0 0 120px;border-right:1px solid var(--line-soft);background:var(--bg-soft);
+  display:flex;flex-direction:column;padding:8px 0}
+.tab{padding:9px 16px;cursor:pointer;color:var(--fg-mute);font-family:var(--mono);font-size:12px;
+  letter-spacing:.08em;border-left:2px solid transparent;display:flex;justify-content:space-between;align-items:center}
+.tab:hover{color:var(--fg-dim);background:var(--panel)}
+.tab.active{color:var(--amber);border-left-color:var(--amber);background:var(--panel)}
+.tab .ct{font-size:10px;color:var(--fg-mute);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+
+#list{flex:0 0 230px;border-right:1px solid var(--line-soft);overflow:auto;display:flex;flex-direction:column}
+#list .lhead{padding:9px 12px;border-bottom:1px solid var(--line-soft);display:flex;gap:6px;align-items:center}
+#list .lhead .lt{flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute)}
+.litem{padding:9px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;transition:.12s}
+.litem:hover{background:var(--panel)}
+.litem.active{background:var(--panel);border-left:2px solid var(--amber);padding-left:10px}
+.litem .ln{font-size:13px;color:var(--fg)}
+.litem .li{font-family:var(--mono);font-size:10px;color:var(--fg-mute);margin-top:2px}
+.lempty{color:var(--fg-mute);font-family:var(--mono);font-size:11px;padding:18px 12px;text-align:center}
+
+#form{flex:1;overflow:auto;padding:18px 24px}
+#form .fhead{font-family:var(--serif);font-size:20px;color:var(--fg);margin-bottom:4px}
+#form .fsub{font-family:var(--mono);font-size:11px;color:var(--fg-mute);margin-bottom:16px}
+.field{margin-bottom:14px}
+.field>label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.06em;
+  color:var(--fg-dim);margin-bottom:4px}
+.field .hint{font-family:var(--mono);font-size:10px;color:var(--fg-mute);margin-top:3px}
+.field input[type=text],.field input[type=number],.field textarea,.field select{
+  width:100%;background:var(--bg);border:1px solid var(--line);border-radius:5px;
+  padding:7px 9px;color:var(--fg);font-size:13px}
+.field input:focus,.field textarea:focus,.field select:focus{outline:none;border-color:var(--amber)}
+.field textarea{resize:vertical;min-height:64px;line-height:1.6}
+.field textarea.json{font-family:var(--mono);font-size:12px;min-height:88px}
+.field textarea.json.bad{border-color:var(--red)}
+.row2{display:flex;gap:10px}.row2>*{flex:1}
+.chk{display:flex;align-items:center;gap:8px}
+.chk input{width:15px;height:15px;accent-color:var(--amber)}
+.chk label{font-family:var(--mono);font-size:12px;color:var(--fg-dim)}
+/* list-of-strings 编辑 */
+.slist .srow{display:flex;gap:6px;margin-bottom:5px}
+.slist .srow input{flex:1}
+.slist .srow button,.kv .krow button{padding:5px 9px}
+/* key-value 编辑 */
+.kv .krow{display:flex;gap:6px;margin-bottom:5px}
+.kv .krow input.k{flex:0 0 38%}.kv .krow input.v{flex:1}
+.miniadd{margin-top:2px}
+
+/* 底部状态条（校验结果） */
+#status{flex:0 0 auto;border-top:1px solid var(--line-soft);background:var(--bg-soft);
+  padding:7px 14px;font-family:var(--mono);font-size:11.5px;color:var(--fg-mute);
+  display:flex;align-items:center;gap:10px;min-height:34px}
+#status .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-mute);flex:0 0 auto}
+#status.ok .dot{background:var(--green);box-shadow:0 0 7px var(--green)}
+#status.bad .dot{background:var(--red);box-shadow:0 0 7px var(--red)}
+#status .probs{flex:1;overflow:auto;white-space:nowrap;color:var(--red)}
+#status.ok .probs{color:var(--green)}
+.ro-note{font-family:var(--mono);font-size:11px;color:var(--amber);padding:10px 14px;
+  border:1px dashed var(--line);border-radius:6px;margin-bottom:14px}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
+#toast{position:fixed;bottom:48px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:9px 16px;
+  font-family:var(--mono);font-size:12px;opacity:0;pointer-events:none;transition:.25s var(--ease);z-index:50}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div id="top">
+  <div class="brand">世界<b>编辑器</b></div>
+  <select id="world-sel" onchange="openWorld(this.value)"></select>
+  <button onclick="newWorld()">＋ 新建</button>
+  <div class="sp"></div>
+  <button onclick="validateNow()">校验</button>
+  <button onclick="saveAs()">另存为</button>
+  <button class="pri" id="btn-save" onclick="saveWorld()">保存</button>
+  <button class="pri" id="btn-play" onclick="playtest()" style="background:var(--cyan);border-color:var(--cyan)">▶ 试玩</button>
+  <a class="play" href="/"><button>← 返回游戏</button></a>
+</div>
+
+<div id="main">
+  <div id="tabs"></div>
+  <div id="list"></div>
+  <div id="form"></div>
+</div>
+
+<div id="status"><span class="dot"></span><span class="probs">载入中…</span></div>
+<div id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+let W=null, curName="", editable=false, curTab="world", curId=null;
+
+const TABS=[
+  {k:"world",  label:"世界"},
+  {k:"rooms",  label:"房间"},
+  {k:"objects",label:"物体"},
+  {k:"enemies",label:"敌人"},
+  {k:"skills", label:"技能"},
+  {k:"quests", label:"任务"},
+];
+
+// ── 字段 schema（常用字段用控件；深层嵌套用 JSON 子编辑器）──
+const KINDS=["item","scenery","document","key","clue","tool","consumable","npc","trace","container","event"];
+const ARCHE=["","brute_low","brute_mid","scout","caster_low","boss"];
+const BEHAV=["aggressive","cautious","opportunist","support"];
+const DMGT=["blunt","slash","pierce","fire","frost","lightning","arcane","shadow"];
+
+const SCHEMA={
+  rooms:[
+    {k:"id",label:"id",type:"text",ro:true},
+    {k:"name",label:"名字",type:"text"},
+    {k:"base_description",label:"基础描述",type:"textarea"},
+    {k:"area",label:"区域 area",type:"text"},
+    {k:"zone",label:"地带 zone",type:"text"},
+    {k:"coords",label:"地图坐标 (x,y)",type:"coords"},
+    {k:"refresh_policy",label:"刷新策略",type:"select",opts:["snapshot","regenerate","static"]},
+    {k:"exits",label:"出口 {方向: 房间id}",type:"kv",hint:"如 north → plains"},
+    {k:"locked_exits",label:"锁定出口 {方向: flag}",type:"kv",hint:"达成 flag 才解锁"},
+    {k:"objects",label:"物体 id 列表",type:"slist"},
+    {k:"enemies",label:"刷怪池 敌人id",type:"slist"},
+    {k:"ambient",label:"陈设 名:类别",type:"slist",hint:"如 桌上的酒瓶:bottle"},
+    {k:"tags",label:"标签",type:"slist"},
+    {k:"grid",label:"二维棋盘 grid",type:"json",hint:"width/height/entry/objects/exits…（非必填）"},
+    {k:"on_first_enter",label:"首次进入事件",type:"json"},
+  ],
+  objects:[
+    {k:"id",label:"id",type:"text",ro:true},
+    {k:"name",label:"名字",type:"text"},
+    {k:"description",label:"描述",type:"textarea"},
+    {k:"kind",label:"种类 kind",type:"select",opts:KINDS},
+    {k:"takable",label:"可拾取",type:"bool"},
+    {k:"hidden",label:"初始隐藏",type:"bool"},
+    {k:"indestructible",label:"不可破坏",type:"bool"},
+    {k:"hidden_when_flag",label:"某 flag 为真时隐去",type:"text"},
+    {k:"hidden_clue",label:"检查揭示线索",type:"text"},
+    {k:"hidden_flag",label:"检查置 flag",type:"text"},
+    {k:"reveals_objects",label:"揭示物体 id",type:"slist"},
+    {k:"named_tags",label:"具名标签",type:"slist"},
+    {k:"modifiers",label:"修饰标签",type:"slist"},
+    {k:"traits",label:"特性",type:"slist"},
+    {k:"hp",label:"hp",type:"number"},
+    {k:"max_hp",label:"max_hp",type:"number"},
+    {k:"ac",label:"ac",type:"number"},
+    {k:"equip_slot",label:"装备槽",type:"text",hint:"weapon/armor/…，空=不可装备"},
+    {k:"damage_expr",label:"武器伤害",type:"text",hint:"如 1d8"},
+    {k:"damage_type",label:"伤害类型",type:"select",opts:DMGT},
+    {k:"defense",label:"护甲 AC 加成",type:"number"},
+    {k:"reach",label:"触及 reach",type:"number"},
+    {k:"use_effect",label:"消耗效果",type:"json",hint:'如 {"heal":12}'},
+    {k:"affordances",label:"可调用方法 affordances",type:"json"},
+    {k:"on_destroyed",label:"摧毁时事件",type:"json"},
+    {k:"on_hit",label:"被击中掉落",type:"json"},
+    {k:"scaling",label:"属性加成 scaling",type:"json"},
+    {k:"resist",label:"减伤 resist",type:"json"},
+    {k:"attr_bonus",label:"属性 bonus",type:"json"},
+  ],
+  enemies:[
+    {k:"id",label:"id",type:"text",ro:true},
+    {k:"name",label:"名字",type:"text"},
+    {k:"archetype",label:"原型 archetype",type:"select",opts:ARCHE},
+    {k:"hp",label:"hp",type:"number"},
+    {k:"max_hp",label:"max_hp",type:"number"},
+    {k:"ac",label:"ac",type:"number"},
+    {k:"speed",label:"speed",type:"number"},
+    {k:"damage_expr",label:"伤害表达式",type:"text"},
+    {k:"damage_type",label:"伤害类型",type:"select",opts:DMGT},
+    {k:"behavior_profile",label:"行为",type:"select",opts:BEHAV},
+    {k:"sight",label:"视野 sight",type:"number",hint:"走进≤sight格被发现自动进战；0=被动"},
+    {k:"reach",label:"触及 reach",type:"number",hint:"近战1/长柄2/远程大"},
+    {k:"rank",label:"列阵 rank",type:"number"},
+    {k:"max_poise",label:"破防阈值",type:"number"},
+    {k:"spawn_weight",label:"刷怪权重",type:"number"},
+    {k:"loot",label:"掉落 id",type:"slist"},
+    {k:"skills",label:"技能 id",type:"slist"},
+    {k:"flavor",label:"风味描述",type:"textarea"},
+    {k:"damage_types_resist",label:"抗性 {类型:倍率}",type:"json",hint:'>1易伤 <1抗性'},
+  ],
+  skills:[
+    {k:"id",label:"id",type:"text",ro:true},
+    {k:"name",label:"名字",type:"text"},
+    {k:"desc",label:"描述",type:"textarea"},
+    {k:"obtained_from",label:"获取来源",type:"text",hint:"如 npc:vera / skill_book:xxx"},
+    {k:"rank",label:"rank",type:"number"},
+    {k:"rank_thresholds",label:"升阶阈值",type:"slistnum"},
+    {k:"passive_modifiers",label:"被动修正 passive_modifiers",type:"json"},
+    {k:"active",label:"主动 active",type:"json",hint:"cost/cooldown/recipe；无则 null"},
+    {k:"reactive",label:"反应 reactive",type:"json",hint:"trigger/condition/recipe；无则 null"},
+  ],
+  quests:[
+    {k:"id",label:"id",type:"text",ro:true},
+    {k:"title",label:"标题",type:"text"},
+    {k:"stage",label:"阶段 stage",type:"text"},
+    {k:"summary",label:"摘要",type:"textarea"},
+    {k:"deadline",label:"期限",type:"text"},
+    {k:"known_facts",label:"已知事实",type:"slist"},
+    {k:"unresolved",label:"未解疑问",type:"slist"},
+  ],
+};
+
+// 集合存取：rooms/objects/enemies/skills 是 dict，quests 是 initial_state.quest_log 数组
+function coll(tab){
+  if(tab==="quests"){ ensure(W,"initial_state",{}); ensure(W.initial_state,"quest_log",[]); return W.initial_state.quest_log; }
+  ensure(W,tab,{}); return W[tab];
+}
+function ensure(o,k,d){ if(o[k]==null) o[k]=d; return o[k]; }
+function entries(tab){
+  const c=coll(tab);
+  if(Array.isArray(c)) return c.map((o,i)=>[o.id||String(i),o]);
+  return Object.entries(c);
+}
+
+// ── API ──
+async function api(method,url,body){
+  const o={method,headers:{"Content-Type":"application/json"}};
+  if(body!==undefined) o.body=JSON.stringify(body);
+  const r=await fetch(url,o); return await r.json();
+}
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("show"),2200); }
+
+async function loadWorldList(sel){
+  const r=await api("GET","/editor/worlds");
+  const s=$("#world-sel"); s.innerHTML="";
+  for(const w of r.worlds){
+    const o=document.createElement("option");
+    o.value=w.name; o.textContent=w.name+(w.builtin?" （内置·只读）":"");
+    s.appendChild(o);
+  }
+  const errs=Object.entries(r.errors||{});
+  if(errs.length) toast("世界加载错误："+errs.map(([f,e])=>f+": "+e).join("；"));
+  if(sel) s.value=sel;
+}
+
+async function openWorld(name){
+  const r=await api("GET","/editor/world/"+encodeURIComponent(name));
+  if(!r.ok){ toast(r.error||"打开失败"); return; }
+  W=r.world; curName=name; editable=r.editable; curId=null;
+  $("#world-sel").value=name;
+  $("#btn-save").disabled=false;        // 内置也能编辑后另存；保存会被后端挡（提示另存）
+  renderTabs(); selectTab(curTab); validateNow();
+}
+
+function newWorld(){
+  const name=prompt("新世界名（字母/数字/下划线/中文）：","my_world");
+  if(!name) return;
+  W={name, canon:{setting_blurb:"",forbidden:[],aesthetic_tags:[],name_style:""},
+     rulebook:{attributes:{str:"力量",dex:"敏捷",con:"体质",int:"智力"},
+               roles:{accuracy:"dex",hp_growth:"con",stamina_pool:"int"},
+               equip_slots:{weapon:"主手",armor:"护甲"},level_curve:"quadratic",
+               attr_per_level:2,unarmed_damage:"1d4"},
+     enemies:{}, skills:{},
+     rooms:{start:{id:"start",name:"起点",base_description:"一个新世界的起点。",
+                   exits:{},objects:[],enemies:[],ambient:[],tags:[],area:"新世界",zone:"起点",coords:[0,0]}},
+     objects:{},
+     initial_state:{position:"start",
+        profile:{name:"你",role:"冒险者",background:""},
+        vitals:{hp:10,max_hp:10,gold:0,ac:10,speed:10,stamina:0,max_stamina:0,level:1,exp:0,
+                attributes:{str:3,dex:3,con:3,int:3}},
+        world_time:{calendar:"第1天",day:1,phase:"noon",weather:"clear"},
+        inventory:[],flags:{},clues:[],skills:[],quest_log:[]}};
+  curName=name; editable=true; curId=null;
+  renderTabs(); selectTab("world"); validateNow();
+  toast("已新建世界草稿——保存后写入 worlds/"+name+".json");
+}
+
+async function saveWorld(){
+  if(!W) return;
+  const r=await api("POST","/editor/world/"+encodeURIComponent(curName),W);
+  if(!r.ok){ toast(r.error); return; }
+  await loadWorldList(r.name); curName=r.name; editable=true;
+  showProblems(r.problems);
+  toast(r.problems.length? `已保存（${r.problems.length} 处校验警告）` : "已保存 ✓");
+}
+async function saveAs(){
+  if(!W) return;
+  const name=prompt("另存为新世界名：",curName+"_copy");
+  if(!name) return;
+  const r=await api("POST","/editor/world/"+encodeURIComponent(name),{...W,name});
+  if(!r.ok){ toast(r.error); return; }
+  await loadWorldList(r.name); openWorld(r.name); toast("已另存为 "+r.name);
+}
+async function validateNow(){
+  if(!W) return;
+  const r=await api("POST","/editor/validate",W);
+  if(!r.ok){ showProblems([r.error]); return; }
+  showProblems(r.problems);
+}
+async function playtest(){
+  if(!W) return;
+  // 先保存（试玩的是已注册世界）；内置只读则提示另存
+  const r=await api("POST","/editor/world/"+encodeURIComponent(curName),W);
+  if(!r.ok){ toast("试玩前需先保存："+r.error); return; }
+  await loadWorldList(r.name); curName=r.name;
+  const p=await api("POST","/editor/playtest/"+encodeURIComponent(r.name));
+  if(!p.ok){ toast(p.error); return; }
+  window.location.href=p.play_url||"/";
+}
+
+function showProblems(problems){
+  const st=$("#status"); const box=st.querySelector(".probs");
+  st.classList.remove("ok","bad");
+  if(!problems||problems.length===0){ st.classList.add("ok"); box.textContent="引用完整 ✓ 无问题"; }
+  else{ st.classList.add("bad"); box.textContent=problems.length+" 处问题： "+problems.join("　·　"); }
+}
+
+// ── 渲染：tabs / list / form ──
+function renderTabs(){
+  const t=$("#tabs"); t.innerHTML="";
+  for(const tb of TABS){
+    const ct = tb.k==="world" ? "" : `<span class="ct">${entries(tb.k).length}</span>`;
+    const d=document.createElement("div");
+    d.className="tab"+(tb.k===curTab?" active":"");
+    d.innerHTML=`<span>${tb.label}</span>${ct}`;
+    d.onclick=()=>selectTab(tb.k);
+    t.appendChild(d);
+  }
+}
+function selectTab(tab){ curTab=tab; curId=null; renderTabs(); renderList(); renderForm(); }
+
+function renderList(){
+  const L=$("#list");
+  if(curTab==="world"){ L.style.display="none"; return; }
+  L.style.display="flex"; L.innerHTML="";
+  const head=document.createElement("div"); head.className="lhead";
+  head.innerHTML=`<span class="lt">${TABS.find(t=>t.k===curTab).label}</span>`;
+  const add=document.createElement("button"); add.textContent="＋ 新增"; add.onclick=addEntity;
+  head.appendChild(add); L.appendChild(head);
+  const es=entries(curTab);
+  if(!es.length){ const e=document.createElement("div"); e.className="lempty"; e.textContent="（空）点 ＋ 新增"; L.appendChild(e); }
+  for(const [id,obj] of es){
+    const d=document.createElement("div"); d.className="litem"+(id===curId?" active":"");
+    const nm=obj.name||obj.title||id;
+    d.innerHTML=`<div class="ln">${esc(nm)}</div><div class="li">${esc(id)}</div>`;
+    d.onclick=()=>{ curId=id; renderList(); renderForm(); };
+    L.appendChild(d);
+  }
+}
+
+function addEntity(){
+  const id=prompt(`新${TABS.find(t=>t.k===curTab).label} id（英文/数字/下划线）：`,curTab.slice(0,-1)+"_new");
+  if(!id) return;
+  const c=coll(curTab);
+  if(curTab==="quests"){
+    if(c.some(q=>q.id===id)){ toast("id 已存在"); return; }
+    c.push({id,title:id,stage:"available",summary:"",known_facts:[],unresolved:[]});
+  }else{
+    if(c[id]){ toast("id 已存在"); return; }
+    const seed={id};
+    if(curTab==="rooms"){ seed.name=id; seed.base_description=""; seed.exits={}; seed.objects=[]; }
+    else if(curTab==="objects"){ seed.name=id; seed.description=""; seed.kind="scenery"; }
+    else if(curTab==="enemies"){ seed.name=id; seed.hp=8; seed.max_hp=8; seed.ac=10; }
+    else if(curTab==="skills"){ seed.name=id; seed.desc=""; }
+    c[id]=seed;
+  }
+  curId=id; renderTabs(); renderList(); renderForm(); validateNow();
+}
+function delEntity(){
+  if(curId==null) return;
+  if(!confirm(`删除 ${curId}？`)) return;
+  const c=coll(curTab);
+  if(Array.isArray(c)){ const i=c.findIndex(q=>q.id===curId); if(i>=0) c.splice(i,1); }
+  else delete c[curId];
+  curId=null; renderTabs(); renderList(); renderForm(); validateNow();
+}
+
+function renderForm(){
+  const F=$("#form"); F.innerHTML="";
+  if(curTab==="world"){ renderWorldForm(F); return; }
+  if(curId==null){ F.innerHTML='<div class="lempty" style="margin-top:40px">← 从左侧选择，或点「＋ 新增」</div>'; return; }
+  const c=coll(curTab);
+  const obj = Array.isArray(c) ? c.find(q=>q.id===curId) : c[curId];
+  if(!obj){ F.innerHTML=""; return; }
+  const head=document.createElement("div");
+  head.innerHTML=`<div class="fhead">${esc(obj.name||obj.title||curId)}</div>
+    <div class="fsub">${curTab} · ${esc(curId)}</div>`;
+  F.appendChild(head);
+  const del=document.createElement("button"); del.className="danger"; del.textContent="删除此项";
+  del.style.marginBottom="14px"; del.onclick=delEntity; F.appendChild(del);
+  for(const f of SCHEMA[curTab]) F.appendChild(fieldEl(f,obj));
+}
+
+function renderWorldForm(F){
+  ensure(W,"canon",{}); ensure(W,"rulebook",{}); ensure(W,"initial_state",{});
+  const is=W.initial_state; ensure(is,"vitals",{}); ensure(is,"profile",{}); ensure(is,"world_time",{});
+  const roomIds=Object.keys(coll("rooms"));
+  F.innerHTML=`<div class="fhead">世界设置</div><div class="fsub">${esc(W.name||curName)}</div>`;
+  sect(F,"世界观 Canon");
+  F.appendChild(fieldEl({k:"setting_blurb",label:"设定基调",type:"textarea"},W.canon));
+  F.appendChild(fieldEl({k:"forbidden",label:"禁止元素",type:"slist"},W.canon));
+  F.appendChild(fieldEl({k:"aesthetic_tags",label:"美学标签",type:"slist"},W.canon));
+  F.appendChild(fieldEl({k:"name_style",label:"命名风格",type:"text"},W.canon));
+  sect(F,"规则书 RuleBook");
+  F.appendChild(fieldEl({k:"attributes",label:"属性 {key:显示名}",type:"kv"},W.rulebook));
+  F.appendChild(fieldEl({k:"roles",label:"机制锚点 {role:attr}",type:"kv"},W.rulebook));
+  F.appendChild(fieldEl({k:"equip_slots",label:"装备槽 {key:显示名}",type:"kv"},W.rulebook));
+  F.appendChild(fieldEl({k:"level_curve",label:"升级曲线",type:"text"},W.rulebook));
+  F.appendChild(fieldEl({k:"unarmed_damage",label:"徒手伤害",type:"text"},W.rulebook));
+  F.appendChild(fieldEl({k:"attr_per_level",label:"每级属性点",type:"number"},W.rulebook));
+  sect(F,"初始状态 Initial State");
+  F.appendChild(fieldEl({k:"position",label:"初始房间",type:"select",opts:roomIds},is));
+  F.appendChild(fieldEl({k:"name",label:"角色名",type:"text"},is.profile));
+  F.appendChild(fieldEl({k:"role",label:"身份",type:"text"},is.profile));
+  F.appendChild(fieldEl({k:"background",label:"背景",type:"textarea"},is.profile));
+  const v=is.vitals;
+  const wrap2=(a,b)=>{const r=document.createElement("div");r.className="row2";r.append(a,b);return r;};
+  F.appendChild(wrap2(fieldEl({k:"hp",label:"hp",type:"number"},v),fieldEl({k:"max_hp",label:"max_hp",type:"number"},v)));
+  F.appendChild(wrap2(fieldEl({k:"stamina",label:"stamina",type:"number"},v),fieldEl({k:"max_stamina",label:"max_stamina",type:"number"},v)));
+  F.appendChild(wrap2(fieldEl({k:"gold",label:"gold",type:"number"},v),fieldEl({k:"ac",label:"ac",type:"number"},v)));
+  F.appendChild(wrap2(fieldEl({k:"speed",label:"speed",type:"number"},v),fieldEl({k:"level",label:"level",type:"number"},v)));
+  F.appendChild(fieldEl({k:"attributes",label:"属性值 {key:值}",type:"kvnum"},v));
+  sect(F,"世界时间 World Time");
+  F.appendChild(fieldEl({k:"calendar",label:"历法",type:"text"},is.world_time));
+  F.appendChild(wrap2(fieldEl({k:"phase",label:"时段",type:"text"},is.world_time),fieldEl({k:"weather",label:"天气",type:"text"},is.world_time)));
+}
+function sect(F,t){ const d=document.createElement("div"); d.className="psection label";
+  d.style.cssText="margin:18px 0 10px;padding-top:12px;border-top:1px solid var(--line-soft)";
+  d.textContent=t; F.appendChild(d); }
+
+// ── 单字段渲染 ──
+function fieldEl(f,obj){
+  const wrap=document.createElement("div"); wrap.className="field";
+  if(f.type!=="bool"){ const lb=document.createElement("label"); lb.textContent=f.label; wrap.appendChild(lb); }
+  let el;
+  const get=()=>obj[f.k], set=v=>{ obj[f.k]=v; touch(); };
+  if(f.type==="text"){ el=document.createElement("input"); el.type="text"; el.value=get()??"";
+    if(f.ro) el.disabled=true; el.oninput=()=>set(el.value); }
+  else if(f.type==="number"){ el=document.createElement("input"); el.type="number"; el.value=get()??0;
+    el.oninput=()=>set(el.value===""?null:Number(el.value)); }
+  else if(f.type==="textarea"){ el=document.createElement("textarea"); el.value=get()??"";
+    el.oninput=()=>set(el.value); }
+  else if(f.type==="select"){ el=document.createElement("select");
+    for(const o of f.opts){ const op=document.createElement("option"); op.value=o; op.textContent=o||"（无）"; el.appendChild(op); }
+    el.value=get()??f.opts[0]; el.onchange=()=>set(el.value); }
+  else if(f.type==="bool"){ el=document.createElement("div"); el.className="chk";
+    const c=document.createElement("input"); c.type="checkbox"; c.id="cb_"+f.k; c.checked=!!get();
+    c.onchange=()=>set(c.checked); const l=document.createElement("label"); l.htmlFor=c.id; l.textContent=f.label;
+    el.append(c,l); }
+  else if(f.type==="coords"){ el=document.createElement("div"); el.className="row2";
+    const cur=get()||[0,0];
+    [0,1].forEach(i=>{ const inp=document.createElement("input"); inp.type="number"; inp.value=cur[i]??0;
+      inp.oninput=()=>{ const a=(get()||[0,0]).slice(); a[i]=Number(inp.value); set(a); }; el.appendChild(inp); }); }
+  else if(f.type==="slist"||f.type==="slistnum"){ el=slistEl(get()||[],v=>set(v),f.type==="slistnum"); }
+  else if(f.type==="kv"||f.type==="kvnum"){ el=kvEl(get()||{},v=>set(v),f.type==="kvnum"); }
+  else if(f.type==="json"){ el=jsonEl(get(),v=>set(v)); }
+  wrap.appendChild(el);
+  if(f.hint){ const h=document.createElement("div"); h.className="hint"; h.textContent=f.hint; wrap.appendChild(h); }
+  return wrap;
+}
+
+function slistEl(arr,onchange,num){
+  const box=document.createElement("div"); box.className="slist";
+  let data=arr.slice();
+  function redraw(){
+    box.innerHTML="";
+    data.forEach((v,i)=>{
+      const row=document.createElement("div"); row.className="srow";
+      const inp=document.createElement("input"); inp.type=num?"number":"text"; inp.value=v;
+      inp.oninput=()=>{ data[i]=num?Number(inp.value):inp.value; onchange(data.slice()); };
+      const del=document.createElement("button"); del.textContent="×";
+      del.onclick=()=>{ data.splice(i,1); onchange(data.slice()); redraw(); };
+      row.append(inp,del); box.appendChild(row);
+    });
+    const add=document.createElement("button"); add.className="miniadd"; add.textContent="＋ 添加";
+    add.onclick=()=>{ data.push(num?0:""); onchange(data.slice()); redraw(); };
+    box.appendChild(add);
+  }
+  redraw(); return box;
+}
+function kvEl(obj,onchange,num){
+  const box=document.createElement("div"); box.className="kv";
+  let data={...obj};
+  function emit(){ onchange({...data}); }
+  function redraw(){
+    box.innerHTML="";
+    Object.entries(data).forEach(([k,v])=>{
+      const row=document.createElement("div"); row.className="krow";
+      const ki=document.createElement("input"); ki.className="k"; ki.value=k; ki.placeholder="key";
+      const vi=document.createElement("input"); vi.className="v"; vi.type=num?"number":"text"; vi.value=v; vi.placeholder="value";
+      ki.onchange=()=>{ const nv=data[k]; delete data[k]; data[ki.value]=nv; emit(); };
+      vi.oninput=()=>{ data[ki.value]=num?Number(vi.value):vi.value; emit(); };
+      const del=document.createElement("button"); del.textContent="×";
+      del.onclick=()=>{ delete data[ki.value]; emit(); redraw(); };
+      row.append(ki,vi,del); box.appendChild(row);
+    });
+    const add=document.createElement("button"); add.className="miniadd"; add.textContent="＋ 添加键值";
+    add.onclick=()=>{ let n="key"+(Object.keys(data).length+1); data[n]=num?0:""; emit(); redraw(); };
+    box.appendChild(add);
+  }
+  redraw(); return box;
+}
+function jsonEl(val,onchange){
+  const ta=document.createElement("textarea"); ta.className="json";
+  ta.value = (val===undefined||val===null) ? "" : JSON.stringify(val,null,2);
+  ta.oninput=()=>{
+    const s=ta.value.trim();
+    if(s===""){ ta.classList.remove("bad"); onchange(null); return; }
+    try{ const v=JSON.parse(s); ta.classList.remove("bad"); onchange(v); }
+    catch(e){ ta.classList.add("bad"); }
+  };
+  return ta;
+}
+
+// 编辑后：刷新计数 + 防抖校验
+let _vt=null;
+function touch(){ renderTabs(); clearTimeout(_vt); _vt=setTimeout(validateNow,600); }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+// ── 启动 ──
+(async function(){
+  await loadWorldList();
+  const first=$("#world-sel").value;
+  if(first) openWorld(first);
+  else $("#status").querySelector(".probs").textContent="还没有世界——点「＋ 新建」开始";
+})();
+</script>
+</body>
+</html>
