@@ -310,19 +310,32 @@ def _board_payload(world, st) -> dict | None:
     # 探索点：未揭示的画成 ?（只给 hint，payload 不外泄）
     for p in mcp_server._active_pois(st, grid):
         tokens.append({"x": p.cell[0], "y": p.cell[1], "name": p.hint, "kind": "poi"})
-    # 敌人：棋盘上的怪，带察觉状态（idle 未察觉 / hostile 已锁定）
-    for fe in st.enemy_field:
-        tmpl = world.get_enemy(fe["enemy_id"])
-        tokens.append({"x": fe["cell"][0], "y": fe["cell"][1],
-                       "name": (tmpl.name if tmpl else fe["enemy_id"]),
-                       "kind": "enemy", "state": fe.get("state", "idle")})
+    # 敌人 + 玩家位置：战斗中读【实时战局】（combatant.cell 随走位更新），否则读探索层
+    enc = mcp_server.SESSION.encounter
+    in_cell_combat = enc is not None and any(c.cell is not None for c in enc.combatants.values())
     px, py = st.cell
+    if in_cell_combat:
+        for cid, c in enc.combatants.items():
+            if c.cell is None or c.is_dead:
+                continue
+            if c.side == "enemy":
+                tokens.append({"x": c.cell[0], "y": c.cell[1], "name": c.name,
+                               "kind": "enemy", "state": "hostile",
+                               "hp": c.hp, "max_hp": c.max_hp})
+            elif cid == "player":
+                px, py = c.cell
+    else:
+        for fe in st.enemy_field:
+            tmpl = world.get_enemy(fe["enemy_id"])
+            tokens.append({"x": fe["cell"][0], "y": fe["cell"][1],
+                           "name": (tmpl.name if tmpl else fe["enemy_id"]),
+                           "kind": "enemy", "state": fe.get("state", "idle")})
     return {
         "room": room.name if room else st.position,
         "width": grid.width, "height": grid.height,
         "player": {"x": px, "y": py},
         "blocked": [list(b) for b in grid.blocked],
-        "tokens": tokens,
+        "tokens": tokens, "in_combat": in_cell_combat,
     }
 
 

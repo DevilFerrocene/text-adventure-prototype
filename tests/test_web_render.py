@@ -166,6 +166,22 @@ class PanelsPayloadTest(unittest.TestCase):
         self.assertTrue(any("老板" in n for n in names))         # 成型物在场
         self.assertTrue(any("酒瓶" in n for n in names))         # 冷物体在场
 
+    def test_board_reflects_combat_positions(self):
+        st = mcp_server.SESSION.state
+        st.position = "plains"; st.cell = (0, 3)
+        st.enemy_field = [{"uid": "fe", "enemy_id": "killer_rabbit", "cell": [5, 1],
+                           "sight": 2, "aggro": 100, "state": "hostile"}]
+        st.active_spawns = ["killer_rabbit"]
+        mcp_server.request_combat(reason="x")
+        try:
+            b = panels_payload()["board"]
+            self.assertTrue(b["in_combat"])
+            self.assertEqual(tuple(b["player"].values()), (0, 3))   # 玩家位置继承自探索
+            enemy = next(t for t in b["tokens"] if t["kind"] == "enemy")
+            self.assertEqual((enemy["x"], enemy["y"]), (5, 1))      # 敌人位置继承自 enemy_field
+        finally:
+            mcp_server.end_combat(reason="t")
+
     def test_board_player_follows_approach(self):
         mcp_server.move("east")
         mcp_server.approach("吧台")                              # 走到地标 (3,1)

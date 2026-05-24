@@ -734,7 +734,12 @@ document.addEventListener('click',e=>{
   const named=e.target.closest('.bcell[data-move]');
   if(named && !busy){ if(boardTip) boardTip.style.display='none'; sendTurn(named.dataset.move); return; }
   const cell=e.target.closest('.bcell[data-cell]');
-  if(cell && !busy){ const [x,y]=cell.dataset.cell.split(',').map(Number); moveToCell(x,y); }
+  if(cell && !busy){
+    if(window.PANELS && window.PANELS.board && window.PANELS.board.in_combat){
+      addSystem('战斗中走位请在下方输入（如「走向X」逼近、「拉开距离」）。',''); return;
+    }
+    const [x,y]=cell.dataset.cell.split(',').map(Number); moveToCell(x,y);
+  }
 });
 async function moveToCell(x,y){
   if(busy) return;
