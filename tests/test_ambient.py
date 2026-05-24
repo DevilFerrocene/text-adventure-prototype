@@ -49,10 +49,22 @@ class WarmObjectTest(unittest.TestCase):
     def test_grab_unknown_errors(self):
         self.assertFalse(mcp_server.warm_object("根本不存在的东西", "grab")["ok"])
 
-    def test_smash_sanctioned(self):
+    def test_smash_furniture_yields_club(self):
+        # 砸家具 → 掉一截木料(1d4 钝棒)入背包（家具抓不起，砸开才有用）
         r = mcp_server.warm_object("长条木桌", "smash")
         self.assertTrue(r["ok"])
         self.assertEqual(r["smashed"], "长条木桌")
+        club = next((i for i in mcp_server.SESSION.state.inventory if "木料" in i.name), None)
+        self.assertIsNotNone(club)
+        self.assertEqual((club.equip_slot, club.damage_expr, club.damage_type),
+                         ("weapon", "1d4", "blunt"))
+
+    def test_smash_bottle_no_debris(self):
+        # 瓶子 grab 已更优，砸只作叙事破坏、不掉碎块
+        before = len(mcp_server.SESSION.state.inventory)
+        r = mcp_server.warm_object("墙角的空酒坛", "smash")
+        self.assertTrue(r["ok"])
+        self.assertEqual(len(mcp_server.SESSION.state.inventory), before)   # 无新物
 
     def test_club_yields_1d4_blunt(self):
         mcp_server.SESSION.state.position = "plains"      # 草原："尖锐的断枝:club"

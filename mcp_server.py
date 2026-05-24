@@ -126,7 +126,10 @@ AMBIENT_KINDS = {
                                             "damage_expr": "1d3", "damage_type": "blunt"}},
     "blade":     {"label": "利器", "grab": {"category": "tool", "equip_slot": "weapon",
                                             "damage_expr": "1d4", "damage_type": "pierce"}},
-    "furniture": {"label": "家具", "grab": None},   # 太大，搬不动——砸/掀作掩体
+    # 家具太大搬不动(grab=None)，但【砸开】能得一截木料当棒子——这是它的用途
+    "furniture": {"label": "家具", "grab": None,
+                  "smash": {"name": "断裂的木料", "category": "tool", "equip_slot": "weapon",
+                            "damage_expr": "1d4", "damage_type": "blunt"}},
     "foliage":   {"label": "草木", "grab": None},   # 当掩体/可燃，不入手
     "misc":      {"label": "杂物", "grab": {"category": "trinket"}},
 }
@@ -4440,7 +4443,8 @@ def warm_object(name: str, action: str = "grab") -> dict:
     Args:
         name:   冷物体名字（取自 get_scene 的 `ambient[].name`；支持部分匹配）
         action: "grab"=据类别确定性材质化成即兴物入背包（瓶=1d3斩/棍棒=1d4钝/石=1d3钝/
-                利器=1d4刺；家具/草木太大不入手）；"smash"=认可就地砸毁/点燃（叙事处理）。
+                利器=1d4刺；家具/草木太大不入手）；"smash"=砸开——家具会掉一截木料(1d4钝棒)
+                入背包，其余物（瓶/石等 grab 已更优）只作叙事砸毁（要伤害/后果走 deal_damage/gm_set_flag）。
     """
     if err := _require_started():
         return err
@@ -4458,9 +4462,17 @@ def warm_object(name: str, action: str = "grab") -> dict:
                 "error": f"此处没有「{name}」这样的环境物。就地可用：{list(props.keys())}"}
     spec = AMBIENT_KINDS.get(kind, AMBIENT_KINDS["misc"])
     if action == "smash":
-        return {"ok": True, "smashed": name, "kind": kind,
-                "note": f"{name}（{spec['label']}）被就地砸毁/破坏——叙事处理即可；"
-                        "若要掉落碎块用 add_improvised，要造成伤害/点燃走 deal_damage。"}
+        smash = spec.get("smash")
+        if smash:                      # 砸开有可用碎块（如家具→木料棒）→ 确定性入背包
+            nm = smash.get("name", name)
+            fields = {k: v for k, v in smash.items() if k != "name"}
+            item = {"id": f"imp_smash_{state.turn}_{abs(hash(name)) % 100000}", "name": nm, **fields}
+            result = add_improvised([item])
+            result["smashed"] = name
+            return result
+        return {"ok": True, "smashed": name, "kind": kind,    # 砸了但无可用碎块
+                "note": f"{name}（{spec['label']}）被就地砸毁/破坏——叙事处理即可（砸开无可用碎块）；"
+                        "要造成伤害/点燃走 deal_damage、要某个后果走 gm_set_flag。"}
     if action != "grab":
         return {"ok": False, "error": "action 只支持 grab / smash"}
     grab = spec.get("grab")
