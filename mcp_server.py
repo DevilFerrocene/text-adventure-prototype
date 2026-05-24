@@ -2737,6 +2737,7 @@ def _write_combat_log(events: list, enc: Encounter, source: str):
 # 刷到的写进 state.active_spawns；get_scene / request_combat 只认它。Boss 房（无此标签）
 # 仍用 room.enemies 静态摆放——首领本就该一直等在那儿，不该随机刷。
 SPAWN_CHANCE = 0.7        # 进入刷怪场时遇敌概率（其余=安静一次，可再进重刷）
+HUNT_SPAWN_CHANCE = 0.9   # 主动搜寻(scout_area)时遇敌概率——比被动路过更容易撞上
 SPAWN_PAIR_CHANCE = 0.15  # 遇敌时刷成两只的概率（其余=单只）
 
 
@@ -2744,13 +2745,14 @@ def _is_spawn_ground(room) -> bool:
     return bool(room) and "spawn_ground" in getattr(room, "tags", []) and bool(room.enemies)
 
 
-def _roll_spawns(room) -> list:
+def _roll_spawns(room, chance: float = SPAWN_CHANCE) -> list:
     """在刷怪场里随机刷一把敌人，返回 enemy id 列表（可能为空=这次安静）。
     非刷怪场返回 []（敌人由 room.enemies 静态决定，不走这里）。
-    按各敌人的 spawn_weight 加权抽取——教学怪权重大、精英怪权重小。"""
+    按各敌人的 spawn_weight 加权抽取——教学怪权重大、精英怪权重小。
+    chance: 遇敌概率，被动路过用 SPAWN_CHANCE，主动搜寻用更高的 HUNT_SPAWN_CHANCE。"""
     if not _is_spawn_ground(room):
         return []
-    if random.random() >= SPAWN_CHANCE:
+    if random.random() >= chance:
         return []                              # 这次没遇上
     pool = list(room.enemies)
     weights = []
@@ -3022,6 +3024,44 @@ def request_combat(reason: str, canon: list[str] = None,
 
     result["reason"] = reason
     result["initiative_advantage"] = initiative_advantage
+    return result
+
+
+@mcp.tool()
+def scout_area() -> dict:
+    """在当前【刷怪场】主动搜寻遇敌——玩家想找架打/练级/往林子深处推进时用。
+
+    引擎按 spawn_weight 加权随机重掷本房刷怪（主动搜寻比被动路过更容易撞上，
+    但仍可能扑空），结果写进 active_spawns。**刷什么、刷不刷得到由引擎定——
+    你不点名、不预知，照实演结果**（"拨开草丛，一只杀人兔正啃着草根" / "搜了一圈，
+    这一带暂时没动静"）。这是给玩家"原地觅敌"的正路，省得为找架打来回走房间。
+
+    - 已有怪在场：直接返回那几只（先打完，别重掷盖掉）。
+    - 刷到怪：返回 spawned（enemy id 列表）+ enemy_profiles，照实演，随后 request_combat()。
+    - 扑空：spawned=[]，照实演"暂时没动静"，可再 scout_area() 或让玩家走动。
+    - 非刷怪场（营地/酒馆/Boss/固定遭遇房）：返回提示——那儿的敌人是摆好的，搜不出野怪。
+    """
+    if err := _require_started():
+        return err
+    if SESSION.in_combat:
+        return {"ok": False, "error": "战斗中，先打完这场。"}
+    state = SESSION.state
+    room = SESSION.world.get_room(state.position)
+    if not _is_spawn_ground(room):
+        return {"ok": False, "spawned": [],
+                "error": "这里不是会冒野怪的地方——搜也搜不出常驻遭遇（营地/室内/Boss 房的敌人是摆好的）。"}
+    if state.active_spawns:
+        return {"ok": True, "spawned": list(state.active_spawns), "rerolled": False,
+                "enemy_profiles": _enemy_profiles_for_scene(state),
+                "note": "已经有目标在场了，先解决它。"}
+    state.active_spawns = _roll_spawns(room, chance=HUNT_SPAWN_CHANCE)
+    _autosave()  # 主动搜寻改了在场敌人，落盘（与 move 一致）
+    result = {"ok": True, "spawned": list(state.active_spawns), "rerolled": True}
+    if state.active_spawns:
+        result["enemy_profiles"] = _enemy_profiles_for_scene(state)
+        result["note"] = "搜到目标。"
+    else:
+        result["note"] = "这一带暂时没动静，可再搜或换个地方。"
     return result
 
 

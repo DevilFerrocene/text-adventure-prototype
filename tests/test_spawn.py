@@ -220,6 +220,74 @@ class NoConjureRealEnemiesTest(unittest.TestCase):
         self.assertTrue(r["ok"])
 
 
+class ScoutAreaTest(unittest.TestCase):
+    """scout_area：玩家在刷怪场原地主动觅敌——重掷遭遇，引擎说了算，不靠走房间。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+        mcp_server.SESSION.state.position = "plains"        # spawn_ground
+        mcp_server.SESSION.state.active_spawns = []
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="test cleanup")
+
+    def test_scout_spawns_into_active(self):
+        # 命中：重掷刷到怪 → 写进 active_spawns，带 profile，rerolled
+        with patch("mcp_server._roll_spawns", return_value=["killer_rabbit"]):
+            r = mcp_server.scout_area()
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["rerolled"])
+        self.assertEqual(r["spawned"], ["killer_rabbit"])
+        self.assertEqual(mcp_server.SESSION.state.active_spawns, ["killer_rabbit"])
+        self.assertTrue(r["enemy_profiles"][0]["name"] == "杀人兔")
+
+    def test_scout_uses_higher_hunt_chance(self):
+        # 主动搜寻用 HUNT_SPAWN_CHANCE（>被动 SPAWN_CHANCE），透传给 _roll_spawns
+        with patch("mcp_server._roll_spawns", return_value=[]) as rs:
+            mcp_server.scout_area()
+        self.assertEqual(rs.call_args.kwargs.get("chance"), mcp_server.HUNT_SPAWN_CHANCE)
+        self.assertGreater(mcp_server.HUNT_SPAWN_CHANCE, mcp_server.SPAWN_CHANCE)
+
+    def test_scout_empty_is_ok_not_error(self):
+        # 扑空：ok=True、spawned=[]，照实演"没动静"，可再搜（不是硬失败）
+        with patch("mcp_server._roll_spawns", return_value=[]):
+            r = mcp_server.scout_area()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["spawned"], [])
+        self.assertTrue(r["rerolled"])
+
+    def test_scout_keeps_existing_present_enemies(self):
+        # 已有怪在场：不重掷盖掉，直接交出来打（rerolled=False）
+        mcp_server.SESSION.state.active_spawns = ["killer_rabbit"]
+        with patch("mcp_server._roll_spawns", return_value=["gale_wolf"]) as rs:
+            r = mcp_server.scout_area()
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["rerolled"])
+        self.assertEqual(r["spawned"], ["killer_rabbit"])     # 没被新刷的狼盖掉
+        rs.assert_not_called()
+
+    def test_scout_rejected_outside_spawn_ground(self):
+        # 营地/室内/Boss 房不冒野怪 → 拒（spawned=[]，给提示）
+        mcp_server.SESSION.state.position = "camp"
+        r = mcp_server.scout_area()
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["spawned"], [])
+
+    def test_scout_blocked_in_combat(self):
+        mcp_server.SESSION.state.active_spawns = ["killer_rabbit"]
+        mcp_server.request_combat(reason="开打")
+        r = mcp_server.scout_area()
+        self.assertFalse(r["ok"])
+
+    def test_scouted_enemy_is_fightable(self):
+        # 搜到后走常规 request_combat() 空参就能直接开打
+        with patch("mcp_server._roll_spawns", return_value=["killer_rabbit"]):
+            mcp_server.scout_area()
+        rc = mcp_server.request_combat(reason="扑上去")
+        self.assertTrue(rc["ok"])
+
+
 class SpawnPersistenceTest(unittest.TestCase):
     """active_spawns 进存档、读档还原。"""
 

@@ -28,7 +28,7 @@
 - **软重生**：死亡不是 game over——回满血、掉一半金币、被烙印拽回营地水晶。战斗倒下自动触发，探索/叙事死亡 GM 裁定。鼓励 6 血绝境里大胆试错。
 - **示例世界「苍穹回廊」**：日式异世界逐层攻略——剑技 / 炎霜雷影属性克制 / 等级成长 / 逐层 Boss 攻略。**冷开局是一场"破局"**：玩家落在初始小镇，6 点血、一双空拳（1d1）、0 金、0 人脉，连城外的杀人兔都打不死——第一件事是靠脑子和胆子挣出活路（酒馆挨打换补偿 / 掰枯树当棍 / 闯林捡手斧 / 或任何即兴解法）。
 
-当前规模：44 个引擎工具，1 个世界（破局开场 + 第一层），333 个回归测试。
+当前规模：45 个引擎工具，1 个世界（破局开场 + 第一层），340 个回归测试。
 
 ---
 
@@ -116,20 +116,20 @@ GM 会带你进入苍穹回廊的营地——6 点血、空着两手、一个铜
 ## 架构一览
 
 ```
-mcp_server.py          # 游戏引擎 + 44 个工具（核心）
+mcp_server.py          # 游戏引擎 + 45 个工具（核心）
 core/types.py          # 数据模型：Modifier/Buff/Skill/RuleBook/Combatant/GameObject…
 runtime/game_world.py  # 世界容器：房间/物体/敌人/技能/规则书注册表
 content/aincrad/       # 示例世界「苍穹回廊」（拆包：canon/enemies/skills/rooms/objects/state）
 standalone/            # 独立运行层：config / tools(工具桥) / agent(loop) / prompt / tui / cli
 .claude/skills/play/   # GM skill（导演 prompt，与 .agents/ 同步）
 .agents/skills/play/
-tests/                 # 333 个回归测试
+tests/                 # 340 个回归测试
 ```
 
 **分层与依赖**：
 - 引擎层（`mcp_server` + `core` + `runtime`）确定性、可计算，是唯一的状态权威。
 - content 层（`content/*.py`）是纯数据。**加新世界 = 写一份 `content/<world>.py`，引擎不动。**
-- 独立层（`standalone/`）只是引擎之上的一层"自带 GM"——工具桥从引擎自己的注册表自动暴露 44 个工具，进程内直调（不走 MCP 协议）。
+- 独立层（`standalone/`）只是引擎之上的一层"自带 GM"——工具桥从引擎自己的注册表自动暴露 45 个工具，进程内直调（不走 MCP 协议）。
 - 单向依赖：Modifier 不知道 Skill/Buff 存在；引擎不知道 content 长什么样；content 不知道谁在当 GM。
 
 ---
