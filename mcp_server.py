@@ -552,9 +552,15 @@ def _item_capabilities(item) -> list:
 
 def _player_has_weapon(state: GameState) -> bool:
     """玩家手里有没有一把真能用的武器（背包里任一 equip_slot==weapon 且带伤害；已装备的也在背包里）。
-    用于 requires_armed 校验：登记成为攻略者前，得先靠破局武装自己。"""
+    用于 requires_armed 校验。"""
     return any(getattr(i, "equip_slot", "") == "weapon" and getattr(i, "damage_expr", "")
                for i in state.inventory)
+
+
+def _player_has_kill(state: GameState) -> bool:
+    """玩家是否已在回廊里放倒过任意敌怪（end_combat 有敌死亡时置 has_slain_enemy）。
+    用于 requires_kill 校验：登记成为攻略者前，得先靠破局亲手杀一只、证明能活命。"""
+    return bool(state.flags.get("has_slain_enemy"))
 
 
 def _inventory_snapshot(state: GameState) -> list:
@@ -2008,6 +2014,10 @@ def call_affordance(object_id: str, verb: str) -> dict:
     if aff.requires_armed and not _player_has_weapon(state):
         return {"ok": False,
                 "error": "需先武装自己——手里得有一把真能用的武器（破局：城外/树林/酒馆各有门路），赤手空拳不够格"}
+
+    if aff.requires_kill and not _player_has_kill(state):
+        return {"ok": False,
+                "error": "你还没在回廊里放倒过任何东西——光有家伙不算数，得亲手杀一只、证明能自己活命，再回来盖章。"}
 
     # Apply effect
     changes = _apply_effect(aff.effect, state, world)
@@ -3603,6 +3613,10 @@ def end_combat(reason: str = "") -> dict:
         "contract_bonus": contract_bonus,   # §12：立约胜利的奖励缩放明细（无约则 None）
         "events": events,
     }
+
+    # 破局里程碑：只要这场放倒过敌怪，就记下"见过血"（登记官 requires_kill 据此放行）
+    if enemies_defeated:
+        state.flags["has_slain_enemy"] = True
 
     SESSION.encounter = None
     # 刷怪场：战斗了结，在场敌人清空（要再遇敌就走出去重新进场刷一把）

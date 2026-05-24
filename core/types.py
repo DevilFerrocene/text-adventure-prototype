@@ -51,6 +51,7 @@ class Affordance:
     requires_item: Optional[str] = None   # 背包物品 ID
     requires_flag: Optional[str] = None   # state.flags key
     requires_armed: bool = False          # 须持有一把真武器（背包里任一 equip_slot==weapon）才能调
+    requires_kill: bool = False           # 须已击杀过任意敌怪（state.flags["has_slain_enemy"]）才能调
     effect: dict = field(default_factory=dict)
     consume_self: bool = False
     consume_item: bool = False

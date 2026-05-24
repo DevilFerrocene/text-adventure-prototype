@@ -235,30 +235,47 @@ class ImprovisedWeaponTest(unittest.TestCase):
 
 
 class RegistrationNodeTest(unittest.TestCase):
-    """明确的登记烙印节点：登记官 register（须已武装）→ 开放武器架。"""
+    """明确的登记烙印节点：登记官 register（须已击杀过任意敌怪）→ 开放武器架。"""
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="t")
 
     def test_registrar_present_in_camp(self):
         sc = mcp_server.get_scene()["scene"]
         self.assertTrue(any(o["id"] == "registry_officer" for o in sc["objects"]))
 
-    def test_register_blocked_when_unarmed(self):
+    def test_register_blocked_before_any_kill(self):
+        # 哪怕已武装，没杀过东西也不收
+        mcp_server.add_improvised([{
+            "id": "imp_stick", "name": "木棍", "category": "tool",
+            "equip_slot": "weapon", "damage_expr": "1d4"}])
         r = mcp_server.call_affordance("registry_officer", "register")
         self.assertFalse(r["ok"])
         self.assertFalse(mcp_server.SESSION.state.flags.get("attacker_registered"))
 
-    def test_register_succeeds_when_armed_and_unlocks_rack(self):
-        # 破局拿到第一把武器（即兴木棍）后才够格登记
-        mcp_server.add_improvised([{
-            "id": "imp_stick", "name": "木棍", "category": "tool",
-            "equip_slot": "weapon", "damage_expr": "1d4"}])
+    def test_register_succeeds_after_kill_and_unlocks_rack(self):
+        mcp_server.SESSION.state.flags["has_slain_enemy"] = True   # 已放倒过敌怪
         r = mcp_server.call_affordance("registry_officer", "register")
         self.assertTrue(r["ok"])
         self.assertTrue(mcp_server.SESSION.state.flags.get("attacker_registered"))
         # 登记后武器架解锁
         self.assertTrue(mcp_server.call_affordance("weapon_rack", "take_sword")["ok"])
+
+    def test_kill_sets_has_slain_enemy_flag(self):
+        # end_combat 里有敌死亡 → 置 has_slain_enemy（登记的前置就此达成）
+        mcp_server.SESSION.state.position = "plains"
+        mcp_server.SESSION.state.active_spawns = ["killer_rabbit"]
+        mcp_server.request_combat(reason="练手")
+        for c in mcp_server.SESSION.encounter.combatants.values():
+            if c.side == "enemy":
+                c.hp = 0
+                c.is_dead = True
+        mcp_server.end_combat(reason="清场")
+        self.assertTrue(mcp_server.SESSION.state.flags.get("has_slain_enemy"))
 
 
 class AdjustGoldTest(unittest.TestCase):
