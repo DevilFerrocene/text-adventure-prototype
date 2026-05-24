@@ -81,7 +81,57 @@ body{
   transition:color .2s,background .2s;
 }
 .tab:hover{color:var(--fg-dim);background:var(--panel)}
+.tab.active{color:var(--amber);background:var(--panel)}
 .tab .badge{font-size:9px;border:1px solid var(--line);border-radius:3px;padding:0 4px;color:var(--fg-mute)}
+
+/* ── 右侧抽屉：背包/技能/任务/地图（只读看板）── */
+#drawer-scrim{position:fixed;inset:0;background:oklch(0.1 0.01 55 / .5);
+  opacity:0;pointer-events:none;transition:opacity .25s var(--ease-in);z-index:40}
+#drawer-scrim.open{opacity:1;pointer-events:auto}
+#drawer{position:fixed;top:0;right:0;height:100%;width:360px;max-width:90vw;z-index:41;
+  background:var(--bg-soft);border-left:1px solid var(--line);
+  transform:translateX(100%);transition:transform .28s var(--ease-in);
+  display:flex;flex-direction:column;box-shadow:-20px 0 50px oklch(0.1 0.01 55 / .4)}
+#drawer.open{transform:translateX(0)}
+#drawer .dhead{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-soft)}
+#drawer .dhead .dtitle{font-family:var(--serif);font-size:18px;color:var(--fg)}
+#drawer .dhead .sp{flex:1}
+#drawer .dhead .dclose{cursor:pointer;color:var(--fg-mute);font-family:var(--mono);font-size:12px;
+  border:1px solid var(--line);border-radius:4px;padding:2px 8px}
+#drawer .dhead .dclose:hover{color:var(--fg);border-color:var(--fg-mute)}
+#dbody{flex:1;overflow:auto;padding:14px 16px;scrollbar-width:thin}
+/* 内切小标签（抽屉内切换 背包/技能/任务/地图）*/
+#dswitch{display:flex;gap:4px;padding:8px 16px 0}
+#dswitch .ds{flex:1;text-align:center;cursor:pointer;font-family:var(--mono);font-size:11px;
+  color:var(--fg-mute);padding:6px 0;border-bottom:2px solid transparent}
+#dswitch .ds.active{color:var(--amber);border-bottom-color:var(--amber)}
+#dswitch .ds:hover{color:var(--fg-dim)}
+/* 列表项 */
+.pitem{padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.pitem .pname{font-family:var(--sans);font-size:14px;color:var(--fg);display:flex;align-items:center;gap:8px}
+.pitem .ptag{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;border:1px solid var(--line);color:var(--fg-mute)}
+.pitem .pcap{font-family:var(--mono);font-size:11px;color:var(--fg-dim);margin-top:4px;line-height:1.5}
+.pitem .pdesc{font-size:12px;color:var(--fg-dim);margin-top:4px;line-height:1.55}
+.pempty{color:var(--fg-mute);font-family:var(--mono);font-size:12px;padding:20px 0;text-align:center}
+.psection{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--fg-mute);
+  text-transform:uppercase;margin:14px 0 4px}
+.psection:first-child{margin-top:0}
+.fact{font-size:12px;color:var(--fg-dim);padding:3px 0 3px 14px;position:relative;line-height:1.5}
+.fact::before{content:'·';position:absolute;left:2px;color:var(--amber)}
+.fact.un::before{content:'?';color:var(--cyan)}
+/* 地图 */
+#mapwrap{position:relative;margin:0 auto}
+#mapwrap svg{position:absolute;inset:0;pointer-events:none}
+.mroom{position:absolute;width:60px;height:44px;transform:translate(-50%,-50%);
+  border:1px solid var(--line);border-radius:6px;background:var(--panel);
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  font-family:var(--sans);font-size:10px;color:var(--fg-dim);padding:2px 3px;line-height:1.15;z-index:2}
+.mroom.unvisited{opacity:.4;border-style:dashed}
+.mroom.safe{border-color:var(--green)}
+.mroom.current{border-color:var(--amber);color:var(--fg);box-shadow:0 0 0 1px var(--amber),0 0 14px oklch(0.82 0.135 75 / .35);z-index:3}
+.mroom .you{position:absolute;top:-7px;right:-7px;font-size:10px;background:var(--amber);color:var(--bg);
+  border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center}
+.maplegend{font-family:var(--mono);font-size:10px;color:var(--fg-mute);text-align:center;margin-top:14px;line-height:1.8}
 
 /* ── 主舞台 ── */
 #stage-wrap{flex:1 1 auto; min-height:0; padding:14px 22px; overflow:hidden; display:flex; flex-direction:column}
@@ -191,6 +241,7 @@ body{
       <div class="tab" data-tab="inventory"><span>背包</span><span class="badge">I</span></div>
       <div class="tab" data-tab="skills"><span>技能</span><span class="badge">S</span></div>
       <div class="tab" data-tab="quest"><span>任务</span><span class="badge">Q</span></div>
+      <div class="tab" data-tab="map"><span>地图</span><span class="badge">M</span></div>
     </div>
   </div>
 
@@ -209,6 +260,22 @@ body{
     <input id="input" placeholder="输入你的行动…" autocomplete="off">
     <span id="submit">提交 ↵</span>
   </div>
+
+  <div id="drawer-scrim"></div>
+  <aside id="drawer">
+    <div class="dhead">
+      <span class="dtitle" id="drawer-title">背包</span>
+      <span class="sp"></span>
+      <span class="dclose">关闭 ESC</span>
+    </div>
+    <div id="dswitch">
+      <span class="ds" data-tab="inventory">背包</span>
+      <span class="ds" data-tab="skills">技能</span>
+      <span class="ds" data-tab="quest">任务</span>
+      <span class="ds" data-tab="map">地图</span>
+    </div>
+    <div id="dbody"></div>
+  </aside>
 
   <div id="spectacle">
     <div class="scrim"></div>
@@ -365,7 +432,7 @@ async function sendTurn(text){
         }else if(ev==='final'){
           if(gm){ gm.classList.remove('cursor'); gm.innerHTML=mdToHtml(gm.dataset.raw||data.text); }
         }else if(ev==='hud'){
-          renderHud(data);
+          renderHud(data); loadPanels();      // 回合末刷新侧栏面板数据
         }else if(ev==='error'){
           if(think.parentNode) think.remove();
           addSystem('✗ '+data.message,'fail');
@@ -399,14 +466,146 @@ function submit(){ const t=$('#input').value.trim(); if(!t||busy) return; $('#in
 $('#submit').onclick=submit;
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();submit();} });
 
+// ── 侧栏面板：背包 / 技能 / 任务 / 地图（只读看板）──
+const esc2 = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const TITLES = {inventory:'背包', skills:'技能', quest:'任务', map:'地图'};
+const SKILL_KIND = {passive:'被动常驻', active:'主动施放', reactive:'反应触发'};
+let drawerTab = null;
+
+async function loadPanels(){
+  try{ const r = await fetch('/panels'); window.PANELS = await r.json(); }
+  catch(e){ return; }
+  if(drawerTab && $('#drawer').classList.contains('open')) renderDrawer(drawerTab);
+}
+function openDrawer(tab){
+  drawerTab = tab;
+  document.querySelectorAll('#dswitch .ds').forEach(d=>d.classList.toggle('active', d.dataset.tab===tab));
+  document.querySelectorAll('#tabs .tab').forEach(d=>d.classList.toggle('active', d.dataset.tab===tab));
+  $('#drawer-title').textContent = TITLES[tab]||'';
+  renderDrawer(tab);
+  $('#drawer').classList.add('open'); $('#drawer-scrim').classList.add('open');
+}
+function closeDrawer(){
+  $('#drawer').classList.remove('open'); $('#drawer-scrim').classList.remove('open');
+  document.querySelectorAll('#tabs .tab').forEach(d=>d.classList.remove('active'));
+  drawerTab=null;
+}
+function toggleDrawer(tab){
+  if($('#drawer').classList.contains('open') && drawerTab===tab) closeDrawer();
+  else openDrawer(tab);
+}
+function renderDrawer(tab){
+  const P = window.PANELS, body = $('#dbody');
+  if(!P || !P.started){ body.innerHTML='<div class="pempty">尚未开局</div>'; return; }
+  if(tab==='inventory') body.innerHTML = renderInventory(P.inventory);
+  else if(tab==='skills') body.innerHTML = renderSkills(P.skills);
+  else if(tab==='quest') body.innerHTML = renderQuest(P.quests);
+  else if(tab==='map'){
+    body.innerHTML = '<div id="mapwrap"></div><div class="maplegend">◆ 当前位置 · 绿框=安全区 · 虚线框=未探明 · 红虚线=锁住的路</div>';
+    renderMap(P.map);
+  }
+}
+function renderInventory(inv){
+  if(!inv || !inv.length) return '<div class="pempty">空空如也——背包里什么都没有</div>';
+  return inv.map(it=>{
+    const ttl = (it.ttl>0)?`<span class="ptag">${it.ttl} 回合</span>`:'';
+    const caps = (it.capabilities||[]).map(c=>esc2(c)).join('<br>');
+    return `<div class="pitem"><div class="pname">${esc2(it.name)}${ttl}</div>`+
+           (caps?`<div class="pcap">${caps}</div>`:'')+`</div>`;
+  }).join('');
+}
+function renderSkills(skills){
+  if(!skills || !skills.length) return '<div class="pempty">还没学会任何技能</div>';
+  let out='';
+  ['passive','active','reactive'].forEach(k=>{
+    const grp = skills.filter(s=>s.kind===k);
+    if(!grp.length) return;
+    out += `<div class="psection">${SKILL_KIND[k]}</div>`;
+    out += grp.map(s=>{
+      const rank = `<span class="ptag">Rank ${s.rank}</span>`;
+      let meta='';
+      if(s.kind==='active'){
+        const cost = Object.entries(s.cost||{}).map(([k,v])=>`${k} ${v}`).join(' / ');
+        const cd = s.cooldown? ` · CD ${s.remaining_cooldown||0}/${s.cooldown}`:'';
+        meta = `<div class="pcap">消耗 ${esc2(cost)||'—'}${cd}</div>`;
+      }
+      return `<div class="pitem"><div class="pname">${esc2(s.name)}${rank}</div>`+
+             (s.desc?`<div class="pdesc">${esc2(s.desc)}</div>`:'')+meta+`</div>`;
+    }).join('');
+  });
+  return out;
+}
+function renderQuest(quests){
+  if(!quests || !quests.length) return '<div class="pempty">暂无任务</div>';
+  return quests.map(q=>{
+    const facts = (q.known_facts||[]).map(f=>`<div class="fact">${esc2(f)}</div>`).join('');
+    const un = (q.unresolved||[]).map(f=>`<div class="fact un">${esc2(f)}</div>`).join('');
+    return `<div class="pitem"><div class="pname">${esc2(q.title)}<span class="ptag">${esc2(q.stage)}</span></div>`+
+           (q.summary?`<div class="pdesc">${esc2(q.summary)}</div>`:'')+
+           (facts?`<div class="psection">已知线索</div>${facts}`:'')+
+           (un?`<div class="psection">未解之谜</div>${un}`:'')+`</div>`;
+  }).join('');
+}
+function renderMap(map){
+  const wrap = $('#mapwrap'); if(!wrap) return;
+  const rooms = (map && map.rooms)||[];
+  if(!rooms.length){ wrap.innerHTML='<div class="pempty">无地图</div>'; return; }
+  const xs=rooms.map(r=>r.x), ys=rooms.map(r=>r.y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+  const cell=72, padX=40, padY=34;
+  const W=(maxX-minX)*cell+padX*2, H=(maxY-minY)*cell+padY*2;
+  wrap.style.width=W+'px'; wrap.style.height=H+'px';
+  const px=r=>padX+(r.x-minX)*cell, py=r=>padY+(maxY-r.y)*cell;   // 北(大 y)朝上
+  const byId={}; rooms.forEach(r=>byId[r.id]=r);
+  let lines=''; const seen=new Set();
+  rooms.forEach(r=>Object.entries(r.exits||{}).forEach(([dir,tid])=>{
+    const t=byId[tid]; if(!t) return;
+    const key=[r.id,tid].sort().join('|'); if(seen.has(key)) return; seen.add(key);
+    const locked=(r.locked||[]).includes(dir);
+    lines += `<line x1="${px(r)}" y1="${py(r)}" x2="${px(t)}" y2="${py(t)}" `+
+             `style="stroke:${locked?'var(--red)':'var(--fg-mute)'};stroke-width:1.5"`+
+             (locked?' stroke-dasharray="4 4"':'')+`/>`;
+  }));
+  const nodes = rooms.map(r=>{
+    const cls='mroom'+(r.current?' current':'')+(r.visited?'':' unvisited')+(r.safe?' safe':'');
+    const you=r.current?'<span class="you">◆</span>':'';
+    return `<div class="${cls}" style="left:${px(r)}px;top:${py(r)}px">${esc2(r.name)}${you}</div>`;
+  }).join('');
+  wrap.innerHTML = `<svg width="${W}" height="${H}">${lines}</svg>${nodes}`;
+}
+// 交互：顶栏 tab / 抽屉内切换 / 关闭 / 快捷键
+document.querySelectorAll('#tabs .tab').forEach(t=>t.onclick=()=>toggleDrawer(t.dataset.tab));
+document.querySelectorAll('#dswitch .ds').forEach(d=>d.onclick=()=>openDrawer(d.dataset.tab));
+$('#drawer .dclose').onclick=closeDrawer;
+$('#drawer-scrim').onclick=closeDrawer;
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){ closeDrawer(); return; }
+  if(e.target && e.target.id==='input') return;     // 正在输入时不抢字母快捷键
+  const m={i:'inventory',s:'skills',q:'quest',m:'map'}[e.key.toLowerCase()];
+  if(m){ e.preventDefault(); toggleDrawer(m); }
+});
+
 // 仪式：点击/Esc 关闭（P0 只有外壳，P1 由后端 spectacle 事件触发）
 function closeSpectacle(){ $('#spectacle').classList.remove('show'); }
 $('#spectacle').onclick=closeSpectacle;
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSpectacle(); });
 
-// ── 开局 ──
+// ── 开局 / 刷新恢复 ──
+// 只在【全新会话】才发空开局回合；刷新一个进行中的会话时直接恢复状态，
+// 不再重发空回合（否则在已有历史上"空续写"会让思考模型 400、把会话搞挂）。
 $('#session-id').textContent='SESSION · '+Math.floor(Math.random()*9000+1000);
-window.addEventListener('load',()=>{ sendTurn(''); $('#input').focus(); });
+async function bootstrap(){
+  try{
+    const s = await (await fetch('/state')).json();
+    if(s && s.started){
+      renderHud(s); loadPanels();
+      addSystem('会话进行中已恢复——状态见上方与侧栏；直接输入你的行动继续。','');
+      return;
+    }
+  }catch(e){}
+  sendTurn('');                 // 全新会话：让 GM 起手开局
+}
+window.addEventListener('load',()=>{ bootstrap(); $('#input').focus(); });
 </script>
 </body>
 </html>

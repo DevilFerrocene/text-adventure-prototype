@@ -2,7 +2,7 @@
 import unittest
 
 import mcp_server
-from standalone.web import _render_events, hud_payload
+from standalone.web import _render_events, hud_payload, panels_payload
 from standalone.prompt import load_system_prompt
 
 
@@ -117,6 +117,48 @@ class HudCombatHpTest(unittest.TestCase):
         hud = hud_payload()
         self.assertEqual(hud["vitals"]["hp"], 5)
         self.assertFalse(hud["in_combat"])
+
+
+class PanelsPayloadTest(unittest.TestCase):
+    """侧栏面板数据：背包/技能/任务/地图。"""
+
+    def setUp(self):
+        mcp_server.start_game("aincrad")
+
+    def test_all_sections_present(self):
+        p = panels_payload()
+        self.assertTrue(p["started"])
+        for k in ("inventory", "skills", "quests", "map"):
+            self.assertIn(k, p)
+        self.assertIsInstance(p["inventory"], list)   # 冷开局空背包
+        self.assertGreaterEqual(len(p["quests"]), 1)  # 开场任务「破局」在
+
+    def test_map_current_room_and_floor_scope(self):
+        p = panels_payload()
+        rooms = p["map"]["rooms"]
+        cur = [r for r in rooms if r["current"]]
+        self.assertEqual(len(cur), 1)
+        self.assertEqual(cur[0]["id"], "camp")          # 开局在营地
+        ids = {r["id"] for r in rooms}
+        self.assertIn("plains", ids)
+        self.assertIn("warden_gate", ids)
+        self.assertNotIn("floor_2_gate", ids)           # 第二层(不同 area)不入第一层图
+        # 坐标无冲突——地图不叠格（mist_cave 已挪开）
+        coords = [(r["x"], r["y"]) for r in rooms]
+        self.assertEqual(len(coords), len(set(coords)))
+
+    def test_inventory_and_skill_surface_after_acquire(self):
+        mcp_server.add_improvised([{"id": "imp_stick", "name": "木棍",
+                                    "category": "tool", "equip_slot": "weapon",
+                                    "damage_expr": "1d4"}])
+        mcp_server.learn_skill("keen_senses")
+        p = panels_payload()
+        inv_names = [i["name"] for i in p["inventory"]]
+        self.assertIn("木棍", inv_names)
+        stick = next(i for i in p["inventory"] if i["name"] == "木棍")
+        self.assertTrue(any("武器" in c for c in stick["capabilities"]))
+        skill_ids = [s["id"] for s in p["skills"]]
+        self.assertIn("keen_senses", skill_ids)
 
 
 class PromptModeTest(unittest.TestCase):

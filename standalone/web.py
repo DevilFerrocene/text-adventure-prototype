@@ -170,6 +170,59 @@ def hud_payload() -> dict:
     }
 
 
+def panels_payload() -> dict:
+    """侧栏面板数据：背包 / 技能 / 任务 / 地图。只读看板，每回合刷新。"""
+    s = mcp_server.SESSION
+    if not s.started:
+        return {"started": False}
+    st = s.state
+    # 背包：名字 + 权威能力清单 + 有限 ttl
+    inventory = [
+        {"name": it["name"], "kind": it.get("kind", ""),
+         "ttl": it.get("ttl", -1), "capabilities": it.get("capabilities", [])}
+        for it in mcp_server._inventory_snapshot(st)
+    ]
+    # 技能：按 被动/主动/反应 分组，带 rank + 主动的 cost/冷却
+    skills = []
+    for sk in st.skills:
+        if sk.active:
+            kind = "active"
+        elif getattr(sk, "reactive", None):
+            kind = "reactive"
+        else:
+            kind = "passive"
+        entry = {"id": sk.id, "name": sk.name, "desc": sk.desc,
+                 "kind": kind, "rank": sk.rank}
+        if sk.active:
+            entry["cost"] = sk.active.cost
+            entry["cooldown"] = sk.active.cooldown
+            entry["remaining_cooldown"] = sk.active.remaining_cooldown
+        skills.append(entry)
+    # 任务：当前任务全量（stage / 已知事实 / 未解疑问）
+    quests = [{"title": q.title, "stage": q.stage, "summary": q.summary,
+               "known_facts": list(q.known_facts), "unresolved": list(q.unresolved)}
+              for q in st.quest_log]
+    # 地图：当前层全图（同 area 的所有房间 + 出口连线 + 当前/已访问标记）
+    cur = st.position
+    cur_room = s.world.get_room(cur)
+    area = cur_room.area if cur_room else ""
+    rooms = []
+    for rid, room in s.world.rooms.items():
+        if area and room.area != area:
+            continue
+        rooms.append({
+            "id": rid, "name": room.name, "zone": room.zone,
+            "x": room.coords[0], "y": room.coords[1],
+            "exits": dict(room.exits),
+            "locked": list(room.locked_exits.keys()),
+            "current": rid == cur,
+            "visited": (rid in st.room_snapshots) or rid == cur,
+            "safe": ("safe_zone" in room.tags) or ("no_combat" in room.tags),
+        })
+    return {"started": True, "inventory": inventory, "skills": skills,
+            "quests": quests, "map": {"rooms": rooms, "area": area}}
+
+
 _MODE_PREFIX = {
     "say": "（说话）", "act": "（行动）", "ooc": "（场外）",
 }
@@ -185,6 +238,11 @@ def index() -> str:
 @app.get("/state")
 def state() -> JSONResponse:
     return JSONResponse(hud_payload())
+
+
+@app.get("/panels")
+def panels() -> JSONResponse:
+    return JSONResponse(panels_payload())
 
 
 @app.post("/turn")

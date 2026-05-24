@@ -162,7 +162,7 @@ def add_all(world):
         objects=["cave_chest", "cave_crystal"],
         area="苍穹回廊·第一层",
         zone="雾隐洞窟",
-        coords=(-1, 1),
+        coords=(1, 1),   # 草原东侧隐藏裂隙（与林边 -1,1 区分，避免地图叠格）
         tags=["hidden", "treasure", "floor_1"],
     ))
 
