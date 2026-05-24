@@ -14,6 +14,7 @@ ENEMIES = {
         damage_types_resist={},
         spawn_weight=4.0,   # 草原"教学怪"：刷怪占大头，让新手大概率先遇到它而非更硬的狼/猪
         sight=2,            # 只顾埋头啃草，反应迟钝——能贴近、甚至绕过去
+        reach=1,            # 近战：贴身才咬得到（棋盘战斗会朝你扑）
         loot=["rabbit_pelt"],
         flavor=(
             "一团雪白的、看起来人畜无害的长耳兔子，蹲在草地上抽动鼻子——"
@@ -29,6 +30,7 @@ ENEMIES = {
         damage_expr="1d6", damage_type="blunt",
         behavior_profile="aggressive", skills=[],
         damage_types_resist={"fire": 1.5},  # 怕火（烤猪）
+        reach=1,            # 近战冲撞：贴身才撞得到
         loot=["boar_hide"],
         flavor=(
             "鬃毛硬如钢针的草原杂兵，一对充血的小眼只会锁定一个目标——"
@@ -43,6 +45,7 @@ ENEMIES = {
         behavior_profile="cautious", skills=[],
         damage_types_resist={"frost": 0.5, "lightning": 1.5},  # 抗霜、惧雷
         sight=4,            # 警觉的猎食者：老远就嗅到你，难绕过
+        reach=1,            # 近战游斗：扑上来咬，棋盘战斗会朝你逼近
         loot=["wolf_fang"],
         flavor=(
             "瘦长的灰影在雾中无声穿梭，从不单只现身。它们用腹语般的低嗥协调包围——"
@@ -57,6 +60,7 @@ ENEMIES = {
         behavior_profile="opportunist", skills=[],
         damage_types_resist={"fire": 2.0},  # 极惧火
         sight=2,            # 扎根不动，靠寒雾感知近处动静
+        reach=4,            # 远程：扎根不动但寒雾够得远，被贴脸反而难受（move_range 1，挪不动）
         loot=["bloom_pollen"],
         flavor=(
             "藏在齐膝雾气中的球茎植物，花瓣边缘结着细密冰晶。根须深深扎进回廊土层——"
@@ -102,6 +106,7 @@ ENEMIES = {
         behavior_profile="opportunist", skills=[],
         damage_types_resist={"lightning": 1.5, "slash": 0.5},  # 惧雷、刃物半伤
         sight=5,            # 伏在阴影里专盯入侵者，视野极广——迷宫里很难溜过它
+        reach=1,            # 近战扑咬
         loot=["lurker_carapace"],
         flavor=(
             "巴掌大的甲虫伏在迷宫石壁阴影里，甲壳灰黑如青苔。独居时无害——"

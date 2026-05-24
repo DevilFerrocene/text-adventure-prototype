@@ -158,7 +158,7 @@ class ActionEconomyTest(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game()["ok"])
-        mcp_server.start_combat(canon=["frenzy_boar"])
+        mcp_server.start_combat(canon=["frenzy_boar"])   # 无 enemy_field → rank 模式（本类测旧列阵机制）
         self.enc = mcp_server.SESSION.encounter
         self.enc.action_economy = True
         # 敌人血量拉满，避免一刀斩杀提前结束遭遇
@@ -256,7 +256,7 @@ class ActionEconomyTest(unittest.TestCase):
 
 
 class TacticalSetupTest(unittest.TestCase):
-    """§14-R2：GM 凭工具自编战术战斗（start_combat tactical 参数 + 武器 reach）。"""
+    """§14-R2：GM 凭工具自编战术战斗（start_combat tactical 参数 + 武器 reach）。rank 模式。"""
 
     def setUp(self):
         self.assertTrue(mcp_server.start_game()["ok"])
@@ -393,7 +393,7 @@ class OpportunityAttackTest(unittest.TestCase):
             mcp_server.end_combat(reason="t")
 
     def _start_tactical_melee(self):
-        mcp_server.start_combat(
+        mcp_server.start_combat(            # 无 enemy_field → rank 模式 AoO
             tactical=True, rank_depth=2,
             improvised=[{"name": "持刀兵", "archetype": "brute_low",
                          "count": 1, "rank": 0, "reach": 1}])
@@ -439,7 +439,7 @@ class TacticalR3Test(unittest.TestCase):
             mcp_server.end_combat(reason="t")
 
     def _elite(self, max_poise=4, reach=1, e_rank=0):
-        mcp_server.start_combat(tactical=True, rank_depth=2, improvised=[
+        mcp_server.start_combat(tactical=True, rank_depth=2, improvised=[   # 无 enemy_field → rank 模式
             {"name": "石巨像", "archetype": "brute_mid", "count": 1,
              "rank": e_rank, "reach": reach, "max_poise": max_poise}])
         enc = mcp_server.SESSION.encounter

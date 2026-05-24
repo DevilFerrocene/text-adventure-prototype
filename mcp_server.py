@@ -566,6 +566,175 @@ def _field_enemy_entries(world, state):
     return out
 
 
+# ── 棋盘战斗：坐标播种 + 距离/移动 ───────────────────────────────────
+def _combat_move_range(speed: int) -> int:
+    return max(1, round((speed or 10) / 5))
+
+
+def _nearest_free_combat_cell(grid, origin, taken, occ):
+    """从 origin 一圈圈向外找第一个可站、未被占的格（放敌人用）。找不到返回 None。"""
+    origin = tuple(origin)
+    for radius in range(1, grid.width + grid.height):
+        ring = []
+        for x in range(origin[0] - radius, origin[0] + radius + 1):
+            for y in range(origin[1] - radius, origin[1] + radius + 1):
+                if max(abs(x - origin[0]), abs(y - origin[1])) == radius:
+                    ring.append((x, y))
+        ring.sort(key=lambda c: (abs(c[0] - origin[0]) + abs(c[1] - origin[1]), c))
+        for c in ring:
+            if c not in taken and _grid_standable(grid, c, occ):
+                return c
+    return None
+
+
+def _seed_combat_cells(state, room, combatants) -> None:
+    """给 combatant 定 move_range；并在【棋盘上有就位的敌人(enemy_field)】时播种 cell→棋盘战斗。
+    玩家=state.cell；敌人优先认领 enemy_field 的格，多出的在玩家周围找可站格放下。
+    没 grid、或没 enemy_field（如首领/酒馆等作者预设遭遇、手搓战斗）→ cell 全留 None → 走 rank 抽象。
+    即：野外撞见/伏击/搜出来的怪（站位有意义）打棋盘战；剧本摆好的遭遇仍走列阵抽象。"""
+    for c in combatants.values():
+        c.move_range = _combat_move_range(c.speed)
+    grid = _room_grid(room)
+    if not grid or not state.enemy_field:
+        return
+    occ = _grid_occupied(grid)
+    taken = set()
+    pc = tuple(state.cell)
+    player = combatants["player"]
+    player.cell = pc
+    player.move_range = _combat_move_range(player.speed)
+    taken.add(pc)
+    field_cells = [tuple(fe["cell"]) for fe in state.enemy_field]
+    fi = 0
+    for cid, c in combatants.items():
+        if cid == "player":
+            continue
+        c.move_range = _combat_move_range(c.speed)
+        cell = None
+        if fi < len(field_cells) and field_cells[fi] not in taken \
+                and _grid_standable(grid, field_cells[fi], occ):
+            cell = field_cells[fi]
+        fi += 1
+        if cell is None:
+            cell = _nearest_free_combat_cell(grid, pc, taken, occ)
+        if cell is not None:
+            c.cell = cell
+            taken.add(cell)
+
+
+def _combat_is_cellmode(enc) -> bool:
+    return any(c.cell is not None for c in enc.combatants.values())
+
+
+def _combat_dist(a, b) -> int:
+    """两 combatant 距离：都有 cell → 切比雪夫格距；否则旧的 rank 之和（gap）。"""
+    if a.cell is not None and b.cell is not None:
+        return _cheb(tuple(a.cell), tuple(b.cell))
+    return a.rank + b.rank
+
+
+def _combat_can_hit(enc, attacker, target, reach: int) -> bool:
+    """attacker 以给定 reach 够不够得着 target。棋盘：格距≤reach（远程还需视线不被墙挡）。"""
+    if attacker.cell is None or target.cell is None:
+        return (attacker.rank + target.rank) < reach          # 旧 gap<reach
+    d = _cheb(tuple(attacker.cell), tuple(target.cell))
+    if d > reach:
+        return False
+    if reach >= 3:                                             # 远程：墙体遮挡
+        grid = _room_grid(SESSION.world.get_room(SESSION.state.position))
+        if grid and not _los_clear(grid, tuple(attacker.cell), tuple(target.cell)):
+            return False
+    return True
+
+
+def _combat_occupied(enc, exclude=None) -> set:
+    """战斗中被 combatant 占用的格（活着的，排除 exclude）。"""
+    return {tuple(c.cell) for cid, c in enc.combatants.items()
+            if c.cell is not None and not c.is_dead and cid != exclude}
+
+
+def _combat_bfs_next(grid, occ, frm, goals):
+    """BFS 求 frm 朝 goals 最短路的【下一格】（绕墙用）；不可达返回 None。"""
+    from collections import deque
+    seen = {frm: None}
+    dq = deque([frm])
+    found = None
+    while dq:
+        cur = dq.popleft()
+        if cur in goals:
+            found = cur
+            break
+        for nb in _grid_neighbors(cur):
+            if nb in seen:
+                continue
+            if nb in goals or (_grid_standable(grid, nb, occ) and nb not in occ):
+                seen[nb] = cur
+                dq.append(nb)
+    if found is None:
+        return None
+    step = found
+    while seen[step] != frm and seen[step] is not None:
+        step = seen[step]
+    return step if step != frm else (found if found != frm else None)
+
+
+def _combat_step(grid, enc, mover_id, frm, goal_set, budget):
+    """mover 朝 goal_set 走最多 budget 格，停在目标【相邻】格（不踏上目标占的格）。
+    贪心走直线（每步选最缩短切比雪夫、且偏移最小的可站邻格），被墙挡则 BFS 绕。"""
+    occ = _grid_occupied(grid) | _combat_occupied(enc, exclude=mover_id)
+    cur = tuple(frm)
+    goals = {tuple(g) for g in goal_set if tuple(g) != cur}
+    if not goals:
+        return cur
+    for _ in range(budget):
+        if any(_cheb(cur, g) <= 1 for g in goals):    # 已贴到目标相邻
+            break
+        tgt = min(goals, key=lambda g: _cheb(cur, g))
+        cand = [nb for nb in _grid_neighbors(cur)
+                if nb not in goals and _grid_standable(grid, nb, occ) and nb not in occ]
+        better = [c for c in cand if _cheb(c, tgt) < _cheb(cur, tgt)]
+        if better:
+            cur = min(better, key=lambda c: (abs(c[0] - tgt[0]) + abs(c[1] - tgt[1]), c))
+        else:
+            nxt = _combat_bfs_next(grid, occ, cur, goals)
+            if nxt is None or nxt in goals:
+                break
+            cur = nxt
+    return cur
+
+
+_BEARING_STEP = {"东": (1, 0), "西": (-1, 0), "北": (0, -1), "南": (0, 1),
+                 "东北": (1, -1), "西北": (-1, -1), "东南": (1, 1), "西南": (-1, 1)}
+
+
+def _combat_retreat(grid, enc, mover_id, frm, away_from, budget):
+    """朝远离 away_from 的方向退最多 budget 格（每步贪心选离 away_from 最远的可站邻格）。"""
+    occ = _grid_occupied(grid) | _combat_occupied(enc, exclude=mover_id)
+    cur = tuple(frm)
+    for _ in range(budget):
+        cand = [nb for nb in _grid_neighbors(cur)
+                if _grid_standable(grid, nb, occ) and nb not in occ]
+        if not cand:
+            break
+        nxt = max(cand, key=lambda c: _cheb(c, tuple(away_from)))
+        if _cheb(nxt, tuple(away_from)) <= _cheb(cur, tuple(away_from)):
+            break                              # 退不远了（被墙/角落困住）
+        cur = nxt
+    return cur
+
+
+def _combat_step_dir(grid, enc, mover_id, frm, delta, budget):
+    """沿固定方位 delta 走最多 budget 格，撞墙/占格即停。"""
+    occ = _grid_occupied(grid) | _combat_occupied(enc, exclude=mover_id)
+    cur = tuple(frm)
+    for _ in range(budget):
+        nxt = (cur[0] + delta[0], cur[1] + delta[1])
+        if not (_grid_standable(grid, nxt, occ) and nxt not in occ):
+            break
+        cur = nxt
+    return cur
+
+
 def _cell_annotation(state, room, cell) -> Optional[dict]:
     """单个实体相对玩家的空间标注（方位/步数/远近/是否手边）。无 grid 或未钉格返回 None。"""
     grid = _room_grid(room)
@@ -3121,6 +3290,11 @@ def _encounter_snapshot() -> dict:
             "hp": c.hp, "max_hp": c.max_hp, "ac": c.ac,
             "is_dead": c.is_dead,
         }
+        # 棋盘战斗：暴露坐标 + 每回合移动力 + 触及（供前端画走位、GM 判距离）
+        if c.cell is not None:
+            entry["cell"] = list(c.cell)
+            entry["move_range"] = c.move_range
+            entry["reach"] = c.reach
         # §14：战术模式才暴露排位/触及/破防，避免非战术战斗多塞 token
         if enc.action_economy:
             entry["rank"] = c.rank
@@ -3407,6 +3581,9 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None,
                 ec.id = cid
                 combatants[cid] = ec
 
+    # ── 棋盘战斗：在房间 grid 上给各 combatant 播种坐标（无 grid 房→留 None 走 rank）──
+    _seed_combat_cells(state, world.get_room(state.position), combatants)
+
     # ── §12 危机合约：消费 state.pending_contract，套到敌方 + 记到 encounter ──
     active_contract = state.pending_contract
     if active_contract:
@@ -3426,6 +3603,9 @@ def start_combat(canon: list[str] = None, improvised: list[dict] = None,
                     round=1, active_idx=0, log=[],
                     rank_depth=rank_depth, action_economy=tactical,
                     contract=active_contract)
+    # 棋盘战斗一律开行动经济（1 大动 + 1 小动）——走位才有意义（move 走格 + attack 同回合）
+    if _combat_is_cellmode(enc):
+        enc.action_economy = True
     SESSION.encounter = enc
 
     snapshot = _encounter_snapshot()
@@ -3986,19 +4166,27 @@ def _combat_strike(actor_id: str, attacker, target_id: str, target, events: list
     return {"ok": True, "outcome": outcome, "crit": is_crit}
 
 
-def _trigger_opportunity_attacks(enc, mover_id: str, mover, old_rank: int, new_rank: int,
+def _trigger_opportunity_attacks(enc, mover_id: str, mover, before, after,
                                  events: list) -> None:
-    """§14-R3：战术下，mover 的移动若把它移出某敌人的触及范围（移动前在 reach 内、
-    移动后超出）→ 该敌人借机攻击一次。每个敌人每回合最多一次，不消耗其动作槽。
-    仅 action_economy（战术模式）生效，杜绝远程无限风筝。"""
+    """mover 的移动若把它移出某【近战】敌人的触及范围（移前在内、移后在外）→ 该敌借机攻击一次。
+    每敌每回合最多一次，不耗其动作槽。仅 action_economy 生效，杜绝无限风筝。
+    棋盘战斗：before/after 是 cell，foe.reach≤2 才算近战会借机（远程不借机）；
+    rank 战斗：before/after 是 rank（旧 gap 逻辑）。"""
     if not enc.action_economy:
         return
+    cellmode = mover.cell is not None
     for fid, foe in list(enc.combatants.items()):
         if foe.side == mover.side or foe.is_dead:
             continue
         reach = foe.reach
-        could_before = (foe.rank + old_rank) < reach
-        could_after = (foe.rank + new_rank) < reach
+        if cellmode:
+            if foe.cell is None or reach > 2:          # 只有近战才借机
+                continue
+            could_before = _cheb(tuple(foe.cell), tuple(before)) <= reach
+            could_after = _cheb(tuple(foe.cell), tuple(after)) <= reach
+        else:
+            could_before = (foe.rank + before) < reach
+            could_after = (foe.rank + after) < reach
         if could_before and not could_after:
             if enc.aoo_used.get(fid) == enc.round:
                 continue                       # 本回合该敌已借机
@@ -4066,14 +4254,13 @@ def declare_intent(actor: str, intent: str, target: str = "",
         target_com = enc.combatants[target]
         damage_expr, dmg_type, atk_scaling, eff_reach = _resolve_weapon(combatant, actor, weapon)
 
-        # §14-R2 reach 门控：触及距离 = 双方靠后程度之和。默认 99 → 无限制（现状）。
-        # 近战手段 reach 小（只够前排打前排）；远程/法术 reach 大。
-        gap = combatant.rank + target_com.rank
-        if gap >= eff_reach:
+        # reach 门控：棋盘战斗=格距≤reach（近战1/长柄2/远程大，远程还查视线）；
+        # 无 grid 的 rank 战斗=旧 gap<reach。默认 reach 99 → 几乎无限制（现状）。
+        if not _combat_can_hit(enc, combatant, target_com, eff_reach):
+            d = _combat_dist(combatant, target_com)
             return {"ok": False,
-                    "error": f"{target_com.name} 在触及范围外"
-                             f"（需 reach≥{gap + 1}，当前手段 {eff_reach}）。"
-                             f"换远程武器、或 move 进位、或拉敌人进身。"}
+                    "error": f"{target_com.name} 在触及范围外（距 {d}，当前手段触及 {eff_reach}）。"
+                             f"先 move 走近、换远程武器、或把它拉到身边。"}
 
         # 攻击结算走共用 _combat_strike（掷骰 vs AC、大成功翻倍、明骰、命中/未命中/击杀事件）。
         # advantage 一次性透传（偷袭/抢先=优势），用完即弃。
@@ -4110,8 +4297,7 @@ def declare_intent(actor: str, intent: str, target: str = "",
             events.append(CombatEvent(kind="windup_fizzle", actor=actor, target="",
                 detail={"actor_name": combatant.name, "reason": "目标已不在，重击落空"}))
         else:
-            gap = combatant.rank + tcom.rank
-            if gap >= w.get("reach", 99):
+            if not _combat_can_hit(enc, combatant, tcom, w.get("reach", 99)):
                 events.append(CombatEvent(kind="windup_fizzle", actor=actor, target=tid,
                     detail={"actor_name": combatant.name, "reason": "目标已脱离触及，重击落空"}))
             else:
@@ -4194,23 +4380,54 @@ def declare_intent(actor: str, intent: str, target: str = "",
 
     # ── move（§14-R2 小动：改列阵位 rank）──
     elif intent == "move":
-        old_rank = combatant.rank
-        if target == "advance":
-            new_rank = max(0, old_rank - 1)
-        elif target == "retreat":
-            new_rank = min(enc.rank_depth - 1, old_rank + 1)
-        elif target.lstrip("-").isdigit():
-            new_rank = max(0, min(enc.rank_depth - 1, int(target)))
+        if combatant.cell is not None:
+            # ── 棋盘移动：toward:<id> / away:<id> / 方位(北/东…) / "x,y"，按 move_range 走格 ──
+            grid = _room_grid(SESSION.world.get_room(SESSION.state.position))
+            before_cell = tuple(combatant.cell)
+            budget = max(1, combatant.move_range)
+            new_cell = before_cell
+            tgt = (target or "").strip()
+            if tgt.startswith("toward:") or tgt.startswith("away:"):
+                ref = enc.combatants.get(tgt.split(":", 1)[1])
+                if not ref or ref.cell is None:
+                    return {"ok": False, "error": f"move 目标 {tgt!r} 不在场上或无棋盘位"}
+                if tgt.startswith("toward:"):
+                    new_cell = _combat_step(grid, enc, actor, before_cell, {tuple(ref.cell)}, budget)
+                else:   # away：朝远离 ref 的方向退 budget 格
+                    new_cell = _combat_retreat(grid, enc, actor, before_cell, tuple(ref.cell), budget)
+            elif tgt in _BEARING_STEP:
+                new_cell = _combat_step_dir(grid, enc, actor, before_cell, _BEARING_STEP[tgt], budget)
+            elif "," in tgt:
+                try:
+                    gx, gy = (int(v) for v in tgt.split(",", 1))
+                    new_cell = _combat_step(grid, enc, actor, before_cell, {(gx, gy)}, budget)
+                except ValueError:
+                    return {"ok": False, "error": "move target 须为 toward:<id> / away:<id> / 方位 / \"x,y\""}
+            else:
+                return {"ok": False, "error": "棋盘战斗 move 需 target=toward:<id> / away:<id> / 方位(北/东/…) / \"x,y\""}
+            combatant.cell = new_cell
+            events.append(CombatEvent(kind="move", actor=actor, target="",
+                detail={"from": list(before_cell), "to": list(new_cell),
+                        "steps": _cheb(before_cell, new_cell)}))
+            _trigger_opportunity_attacks(enc, actor, combatant, before_cell, new_cell, events)
         else:
-            return {"ok": False,
-                    "error": "move 需 target=advance/retreat 或目标排号(0=最前)"}
-        combatant.rank = new_rank
-        events.append(CombatEvent(
-            kind="move", actor=actor, target="",
-            detail={"from_rank": old_rank, "to_rank": new_rank},
-        ))
-        # §14-R3：脱离某敌的触及范围 → 该敌借机攻击（战术、每敌每回合一次、不耗其动作）
-        _trigger_opportunity_attacks(enc, actor, combatant, old_rank, new_rank, events)
+            # ── 旧 rank 移动（无 grid 房）：advance/retreat/排号 ──
+            old_rank = combatant.rank
+            if target == "advance":
+                new_rank = max(0, old_rank - 1)
+            elif target == "retreat":
+                new_rank = min(enc.rank_depth - 1, old_rank + 1)
+            elif target.lstrip("-").isdigit():
+                new_rank = max(0, min(enc.rank_depth - 1, int(target)))
+            else:
+                return {"ok": False,
+                        "error": "move 需 target=advance/retreat 或目标排号(0=最前)"}
+            combatant.rank = new_rank
+            events.append(CombatEvent(
+                kind="move", actor=actor, target="",
+                detail={"from_rank": old_rank, "to_rank": new_rank},
+            ))
+            _trigger_opportunity_attacks(enc, actor, combatant, old_rank, new_rank, events)
         # 借机一击可能把玩家打死 → 走软重生收尾
         if (death := _maybe_player_death(enc, events)) is not None:
             return death
@@ -4429,18 +4646,39 @@ def enemy_suggest(enemy_id: str) -> dict:
         suggested_target = targets[0].id
         reason = f"default(→aggressive): 攻击 {targets[0].name}"
 
-    # ── §14-R3 战术后处理：若打算攻击，按触及/破防条决定 走位/蓄力/普攻 ──
+    # ── 战术后处理：若打算攻击，按触及/站位决定 逼近/放风筝/蓄力/普攻 ──
     if intent == "attack" and suggested_target in enc.combatants:
         tcom = enc.combatants[suggested_target]
-        gap = enemy.rank + tcom.rank
-        if enc.action_economy and gap >= enemy.reach and enemy.rank > 0:
-            # 够不到目标 → 前压一排（近战进身；远程 reach 大不会触发）
-            intent, suggested_target = "move", "advance"
-            reason = f"够不到 {tcom.name}（gap {gap}≥触及 {enemy.reach}）——前压一排逼近"
-        elif enemy.max_poise > 0 and not enemy.windup:
-            # 精英/首领（有破防条）：起手蓄力重击，给玩家留打断窗口（削破韧条即可取消）
-            intent = "windup"
-            reason = f"蓄势——下回合对 {tcom.name} 落下重击；趁它收不住手时削破韧条可打断"
+        if enemy.cell is not None and tcom.cell is not None:
+            # 棋盘 AI：距离=格距，reach=格；远程(reach≥3)被贴脸就拉开放风筝，近战够不到就逼近
+            d = _cheb(tuple(enemy.cell), tuple(tcom.cell))
+            reach = enemy.reach
+            ranged = reach >= 3
+            can_move = (not enc.action_economy) or (not enemy.acted_minor)
+            if ranged and d < 2 and can_move:
+                intent, suggested_target = "move", f"away:{tcom.id}"
+                reason = f"{enemy.name} 远程游斗，被 {tcom.name} 贴脸(距 {d})——拉开距离放风筝"
+            elif d > reach:
+                if can_move:
+                    intent, suggested_target = "move", f"toward:{tcom.id}"
+                    reason = f"够不到 {tcom.name}(距 {d}>触及 {reach})——朝它逼近 {enemy.move_range} 格"
+                else:
+                    intent, suggested_target = "end_turn", ""
+                    reason = f"够不到 {tcom.name} 又用尽了移动——本回合作罢"
+            elif enemy.max_poise > 0 and not enemy.windup:
+                intent = "windup"
+                reason = f"蓄势——下回合对 {tcom.name} 落下重击；趁它收不住手时削破韧条可打断"
+            else:
+                reason += f"（距 {d}，在触及 {reach} 内，直接打）"
+        else:
+            # 旧 rank AI（无 grid 房）
+            gap = enemy.rank + tcom.rank
+            if enc.action_economy and gap >= enemy.reach and enemy.rank > 0:
+                intent, suggested_target = "move", "advance"
+                reason = f"够不到 {tcom.name}（gap {gap}≥触及 {enemy.reach}）——前压一排逼近"
+            elif enemy.max_poise > 0 and not enemy.windup:
+                intent = "windup"
+                reason = f"蓄势——下回合对 {tcom.name} 落下重击；趁它收不住手时削破韧条可打断"
 
     return _ret(intent, suggested_target, reason)
 

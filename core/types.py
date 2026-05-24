@@ -829,9 +829,12 @@ class Combatant:
     max_stamina: int = 0
     is_dead: bool = False
     archetype: str = ""             # 来源原型，用于击败后按 CHAR_XP_BY_ARCHETYPE 给经验
+    # ── 二维棋盘战斗（part2）：在房间 grid 上打。cell=None 时落回下面的 rank 抽象（旧战斗/无 grid 房）──
+    cell: Optional[Tuple[int, int]] = None   # 棋盘格 (x,y)；None=非棋盘战斗，走 rank
+    move_range: int = 2             # 每回合可走格数（按 speed 派生，棋盘战斗用）
     # ── §14 战斗结构层（加法式：默认值=现有"无结构"行为，旧战斗不变）──
-    rank: int = 0                   # 列阵位：0=最前排，越大越靠后
-    reach: int = 99                 # 基础攻击触及的排数差（默认 99=无限，即现状"谁都能打谁"）
+    rank: int = 0                   # 列阵位：0=最前排，越大越靠后（非棋盘战斗用）
+    reach: int = 99                 # 攻击触及：棋盘战斗=格距上限(近战1/长柄2/远程大)，rank 战斗=排数差。默认 99
     windup: Optional[dict] = None   # 蓄力中的待结算动作 {turns_left,name,intent,target}；None=未蓄力
     poise: int = 0                  # 当前削韧累积
     max_poise: int = 0              # 破防阈值（0=无破防条，杂兵默认无；精英/首领才设）

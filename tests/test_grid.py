@@ -362,6 +362,99 @@ class EnemyFieldVisionTest(unittest.TestCase):
         self.assertEqual(st.enemy_field[0]["enemy_id"], "gale_wolf")
 
 
+class GridCombatTest(unittest.TestCase):
+    """棋盘战斗（part2 统一）：从 enemy_field 播种坐标，reach=格距，move 走格，借机攻击，敌人位置 AI。"""
+
+    def setUp(self):
+        self.assertTrue(m.start_game("aincrad")["ok"])
+        m.SESSION.state.position = "plains"
+
+    def tearDown(self):
+        if m.SESSION.in_combat:
+            m.end_combat(reason="t")
+
+    def _fight(self, eid, ecell, pcell=(0, 3)):
+        st = m.SESSION.state
+        st.cell = pcell
+        st.enemy_field = [{"uid": "fe", "enemy_id": eid, "cell": list(ecell),
+                           "sight": 3, "aggro": 100, "state": "hostile"}]
+        st.active_spawns = [eid]
+        m.request_combat(reason="t")
+        enc = m.SESSION.encounter
+        e = next(c for c in enc.combatants.values() if c.side == "enemy")
+        return enc, enc.combatants["player"], e
+
+    def test_field_combat_seeds_cells_and_action_economy(self):
+        enc, p, e = self._fight("killer_rabbit", (5, 3))
+        self.assertTrue(m._combat_is_cellmode(enc))
+        self.assertIsNotNone(p.cell)
+        self.assertIsNotNone(e.cell)
+        self.assertTrue(enc.action_economy)          # 棋盘战斗自动开行动经济
+
+    def test_no_field_falls_back_to_rank_mode(self):
+        st = m.SESSION.state
+        st.position = "camp"                          # 非刷怪场（不触发反幻怪守卫），且无 enemy_field
+        st.enemy_field = []
+        self.assertTrue(m.start_combat(canon=["frenzy_boar"])["ok"])
+        enc = m.SESSION.encounter
+        self.assertFalse(m._combat_is_cellmode(enc))  # 没在场上就位的敌人 → 抽象 rank
+        self.assertIsNone(enc.combatants["player"].cell)
+
+    def test_melee_reach_gated_by_distance(self):
+        enc, p, e = self._fight("killer_rabbit", (5, 3))
+        p.cell, e.cell, p.reach = (0, 3), (5, 3), 1
+        r = m.declare_intent("player", "attack", target=e.id)
+        self.assertFalse(r["ok"])
+        self.assertIn("触及范围外", r["error"])
+        e.cell = (1, 3)                               # 移到相邻
+        self.assertTrue(m.declare_intent("player", "attack", target=e.id)["ok"])
+
+    def test_ranged_line_of_sight_blocked_by_wall(self):
+        m.SESSION.state.position = "labyrinth"
+        enc, p, e = self._fight("shadow_lurker", (2, 1), pcell=(0, 1))
+        p.cell, e.cell, p.reach = (0, 1), (2, 1), 6   # 远程，但 (1,1) 是廊柱挡视线
+        r = m.declare_intent("player", "attack", target=e.id)
+        self.assertFalse(r["ok"])
+        p.cell = (2, 2)                               # 挪到无墙阻隔处
+        self.assertTrue(m.declare_intent("player", "attack", target=e.id)["ok"])
+
+    def test_move_toward_closes_distance(self):
+        enc, p, e = self._fight("killer_rabbit", (5, 3))
+        p.cell, e.cell = (0, 3), (5, 3)
+        d0 = m._cheb(p.cell, e.cell)
+        m.declare_intent("player", "move", target=f"toward:{e.id}")
+        self.assertLess(m._cheb(p.cell, e.cell), d0)  # 走近了（move_range 2）
+
+    def test_move_away_increases_distance(self):
+        enc, p, e = self._fight("killer_rabbit", (3, 3), pcell=(2, 3))
+        p.cell, e.cell = (2, 3), (3, 3)
+        d0 = m._cheb(p.cell, e.cell)
+        m.declare_intent("player", "move", target=f"away:{e.id}")
+        self.assertGreater(m._cheb(p.cell, e.cell), d0)
+
+    def test_leaving_melee_provokes_opportunity_attack(self):
+        enc, p, e = self._fight("killer_rabbit", (4, 3), pcell=(3, 3))
+        p.cell, e.cell, p.hp = (3, 3), (4, 3), 100    # 相邻，兔 reach1
+        p.acted_minor = False
+        r = m.declare_intent("player", "move", target=f"away:{e.id}")
+        self.assertGreater(m._cheb(p.cell, e.cell), 1)         # 真的离开了近战
+        self.assertTrue(any(ev["actor"] == e.id for ev in r["events"]))  # 兔借机咬了一口
+
+    def test_enemy_melee_approaches_when_out_of_reach(self):
+        enc, p, e = self._fight("killer_rabbit", (5, 1))
+        p.cell, e.cell = (0, 3), (5, 1)               # 隔很远
+        s = m.enemy_suggest(e.id)
+        self.assertEqual(s["suggested_intent"], "move")
+        self.assertTrue(s["suggested_target"].startswith("toward:"))
+
+    def test_enemy_ranged_kites_when_cornered(self):
+        enc, p, e = self._fight("mistbloom", (2, 2), pcell=(2, 3))
+        p.cell, e.cell = (2, 3), (2, 2)               # 食人花(reach4)被贴脸
+        s = m.enemy_suggest(e.id)
+        self.assertEqual(s["suggested_intent"], "move")
+        self.assertTrue(s["suggested_target"].startswith("away:"))
+
+
 class CellPersistenceTest(unittest.TestCase):
     """move 重置到 entry；存档往返保留 cell。"""
 
