@@ -2638,6 +2638,10 @@ def _encounter_snapshot() -> dict:
                 entry["poise"] = c.poise
                 entry["max_poise"] = c.max_poise
                 entry["staggered"] = c.staggered
+        # §14-R3：蓄力中（任何模式都暴露——这是给玩家的"快打断它"的预警信号）
+        if c.windup:
+            entry["winding_up"] = True
+            entry["windup_target"] = c.windup.get("target", "")
         combatants.append(entry)
     active = enc.turn_order[enc.active_idx] if enc.turn_order and enc.active_idx < len(enc.turn_order) else "?"
     recent = []
@@ -3343,31 +3347,79 @@ def respawn(reason: str = "") -> dict:
 INTENT_ACTION_COST = {
     "attack": "major", "defend": "major", "flee": "major",
     "use_item": "major", "move": "minor", "end_turn": "free",
+    # §14-R3：蓄力(大动,只起手不打)/释放(大动,落下重击)/复原(free,破防者跳过本回合)
+    "windup": "major", "release": "major", "recover": "free",
 }
+
+
+def _resolve_weapon(combatant, actor: str, weapon: str):
+    """解出本次攻击实际用的 (damage_expr, dmg_type, scaling, eff_reach)：
+    显式 weapon 参数 > 玩家已装备武器 > 徒手(combatant 自带)。attack 与 windup 共用。"""
+    damage_expr, dmg_type, scaling, eff_reach = (
+        combatant.damage_expr, combatant.damage_type, None, combatant.reach)
+    weapon_id = weapon or (SESSION.state.equipped.get("weapon", "") if actor == "player" else "")
+    if weapon_id:
+        item = SESSION.state.get_item(weapon_id)
+        if item:
+            eff_reach = item.reach
+            if item.damage_expr:
+                damage_expr = item.damage_expr
+            elif "damage" in item.tags:
+                for tag in item.tags:
+                    if tag.startswith("dmg:"):
+                        damage_expr = tag.split(":", 1)[1]
+                        break
+            if item.damage_type and item.damage_type != "blunt":
+                dmg_type = item.damage_type
+            if item.scaling:
+                scaling = item.scaling
+    return damage_expr, dmg_type, scaling, eff_reach
+
+
+def _apply_poise(target, amount: int, events: list) -> bool:
+    """§14-R3 削韧：对带破防条(max_poise>0)的单位累积韧性削减。满了→破防(staggered)：
+    清空韧条、取消其蓄力(打断!)。返回是否刚破防。杂兵(max_poise=0)无韧条、不受影响。"""
+    if target.max_poise <= 0 or target.staggered:
+        return False
+    target.poise += max(0, int(amount))
+    if target.poise >= target.max_poise:
+        target.staggered = True
+        target.poise = 0
+        cancelled = target.windup is not None
+        target.windup = None
+        events.append(CombatEvent(
+            kind="staggered", actor=target.id, target="",
+            detail={"target_name": target.name, "windup_cancelled": cancelled}))
+        return True
+    return False
 
 
 def _combat_strike(actor_id: str, attacker, target_id: str, target, events: list, *,
                    damage_expr: str, dmg_type: str, scaling: dict | None = None,
                    advantage: str = "", reason: str | None = None,
-                   opportunity: bool = False) -> dict:
+                   opportunity: bool = False, extra_mult: float = 1.0) -> dict:
     """一次攻击结算：掷骰 vs 目标 AC（可优劣势）→ 命中则 roll 伤害（大成功翻倍）
     → 记 attack/hit/miss/kill 事件。玩家攻击分支与借机攻击共用，确保暴击/优势一致。
     reach 门控由调用方负责（借机攻击不门控——它本就是脱离触及时触发）。"""
     reason = reason or f"{attacker.name} 攻击 {target.name}"
+    # §14-R3：打破防中的目标更易得手——未显式指定时自动优势（趁虚而入）
+    if target.staggered and not advantage:
+        advantage = "advantage"
     atk_roll = roll_check(reason=reason, sides=20, dc=target.ac, advantage=advantage)
     if not atk_roll["ok"]:
         return atk_roll
     atk_line = explain_last_roll().get("line_format", "")
     outcome = atk_roll.get("outcome")
     is_crit = outcome == "critical_success"
+    charged = extra_mult > 1.0
     roll_detail = {"roll": atk_roll["raw"], "total": atk_roll.get("total"),
                    "ac": target.ac, "outcome": outcome, "line": atk_line,
                    "actor_name": attacker.name, "target_name": target.name,
-                   "opportunity": opportunity}
+                   "opportunity": opportunity, "charged": charged}
     if outcome in ("success", "critical_success"):
         dmg_raw = _roll_damage(damage_expr)
         dmg = _resolve_damage(target, dmg_raw, dmg_type, {"reason": reason},
-                              scaling=scaling, damage_mult=2.0 if is_crit else 1.0)
+                              scaling=scaling, damage_mult=(2.0 if is_crit else 1.0) * extra_mult)
         final_dmg = dmg["damage"]
         events.append(CombatEvent(kind="attack", actor=actor_id, target=target_id,
                                   detail=dict(roll_detail), roll_audit=SESSION.last_roll_audit))
@@ -3377,7 +3429,10 @@ def _combat_strike(actor_id: str, attacker, target_id: str, target, events: list
                     "resist": dmg.get("resist", 1.0), "damage_type": dmg_type,
                     "target_hp": f"{target.hp}/{target.max_hp}",
                     "target_name": target.name,
-                    "crit": is_crit, "opportunity": opportunity}))
+                    "crit": is_crit, "opportunity": opportunity, "charged": charged}))
+        # §14-R3 削韧：命中给带破防条的目标累积韧性削减（满则破防、打断其蓄力）
+        if target.hp > 0:
+            _apply_poise(target, final_dmg, events)
     else:
         events.append(CombatEvent(kind="miss", actor=actor_id, target=target_id,
                                   detail=dict(roll_detail), roll_audit=SESSION.last_roll_audit))
@@ -3418,8 +3473,10 @@ def declare_intent(actor: str, intent: str, target: str = "",
 
     Args:
         actor:     行动者 id（"player" 或 "enemy_xxx"）
-        intent:    意图 — attack / defend / flee / use_item / move / end_turn
-        target:    目标 id（attack 必填）；move 时为 advance/retreat 或目标排号
+        intent:    意图 — attack / defend / flee / use_item / move / end_turn；
+                   §14-R3：windup（蓄力起手，target=目标）/ release（落下蓄力重击，×2）/
+                   recover（破防者复原，放弃本回合）
+        target:    目标 id（attack/windup 必填）；move 时为 advance/retreat 或目标排号
         skill_id:  使用的技能 id（可选）
         weapon:    使用的武器 id（可选，从背包取）
         advantage: attack 时这一击的优劣势——"advantage"=偷袭/抢先/居高临下双骰取高、
@@ -3465,32 +3522,7 @@ def declare_intent(actor: str, intent: str, target: str = "",
         if not target or target not in enc.combatants:
             return {"ok": False, "error": f"目标 {target!r} 不存在"}
         target_com = enc.combatants[target]
-
-        damage_expr = combatant.damage_expr
-        dmg_type = combatant.damage_type
-        atk_scaling: dict | None = None
-        # Use weapon: explicit param → fallback to equipped weapon for player
-        weapon_id = weapon if weapon else ""
-        if not weapon_id and actor == "player":
-            weapon_id = SESSION.state.equipped.get("weapon", "")
-        # §14-R2：触及距离 = 用武器则取武器 reach（近战刀=1/弓=99），徒手则取本体 reach。
-        eff_reach = combatant.reach
-        if weapon_id:
-            item = SESSION.state.get_item(weapon_id)
-            if item:
-                eff_reach = item.reach
-                # §11 R3：优先读结构化字段；回退读 "dmg:" tag（向后兼容）
-                if item.damage_expr:
-                    damage_expr = item.damage_expr
-                elif "damage" in item.tags:
-                    for tag in item.tags:
-                        if tag.startswith("dmg:"):
-                            damage_expr = tag.split(":", 1)[1]
-                            break
-                if item.damage_type and item.damage_type != "blunt":
-                    dmg_type = item.damage_type
-                if item.scaling:
-                    atk_scaling = item.scaling
+        damage_expr, dmg_type, atk_scaling, eff_reach = _resolve_weapon(combatant, actor, weapon)
 
         # §14-R2 reach 门控：触及距离 = 双方靠后程度之和。默认 99 → 无限制（现状）。
         # 近战手段 reach 小（只够前排打前排）；远程/法术 reach 大。
@@ -3508,6 +3540,54 @@ def declare_intent(actor: str, intent: str, target: str = "",
                                 scaling=atk_scaling, advantage=advantage)
         if not strike.get("ok"):
             return strike
+
+    # ── windup（§14-R3 蓄力起手：本回合只蓄力不打，下次行动落下重击；可被打断）──
+    elif intent == "windup":
+        if not target or target not in enc.combatants:
+            return {"ok": False, "error": f"目标 {target!r} 不存在"}
+        target_com = enc.combatants[target]
+        damage_expr, dmg_type, atk_scaling, eff_reach = _resolve_weapon(combatant, actor, weapon)
+        combatant.windup = {"target": target, "name": "蓄力重击",
+                            "damage_expr": damage_expr, "dmg_type": dmg_type,
+                            "scaling": atk_scaling, "reach": eff_reach}
+        events.append(CombatEvent(
+            kind="windup_start", actor=actor, target=target,
+            detail={"actor_name": combatant.name, "target_name": target_com.name,
+                    "telegraph": f"{combatant.name} 沉腰蓄力——下次行动将落下一记重击。"
+                                 "趁它收不住手时打断（削破韧条）能让它的重击落空。"}))
+
+    # ── release（§14-R3 释放蓄力重击：×2 重伤；目标没了/被打断则落空）──
+    elif intent == "release":
+        w = combatant.windup
+        if not w:
+            return {"ok": False, "error": "没有蓄力可释放（先 windup 起手）。"}
+        combatant.windup = None
+        tid = w.get("target")
+        tcom = enc.combatants.get(tid)
+        if not tcom or tcom.is_dead:
+            events.append(CombatEvent(kind="windup_fizzle", actor=actor, target="",
+                detail={"actor_name": combatant.name, "reason": "目标已不在，重击落空"}))
+        else:
+            gap = combatant.rank + tcom.rank
+            if gap >= w.get("reach", 99):
+                events.append(CombatEvent(kind="windup_fizzle", actor=actor, target=tid,
+                    detail={"actor_name": combatant.name, "reason": "目标已脱离触及，重击落空"}))
+            else:
+                strike = _combat_strike(actor, combatant, tid, tcom, events,
+                                        damage_expr=w["damage_expr"], dmg_type=w["dmg_type"],
+                                        scaling=w.get("scaling"), extra_mult=2.0,
+                                        reason=f"{combatant.name} 落下蓄力重击 {tcom.name}")
+                if not strike.get("ok"):
+                    return strike
+
+    # ── recover（§14-R3 复原：破防者本回合只能挣扎复原，放弃行动）──
+    elif intent == "recover":
+        if combatant.staggered:
+            combatant.staggered = False
+            events.append(CombatEvent(kind="recover", actor=actor, target="",
+                detail={"actor_name": combatant.name, "effect": "挣脱破防，错失本回合行动"}))
+        else:
+            events.append(CombatEvent(kind="end_turn", actor=actor, target="", detail={}))
 
     # ── defend ──
     elif intent == "defend":
@@ -3601,7 +3681,8 @@ def declare_intent(actor: str, intent: str, target: str = "",
 
     else:
         return {"ok": False,
-                "error": f"不支持的意图 {intent!r}，可用: attack/defend/flee/use_item/move/end_turn"}
+                "error": f"不支持的意图 {intent!r}，可用: "
+                         "attack/defend/flee/use_item/move/end_turn/windup/release/recover"}
 
     # ── §14-R2：动作落地，置位对应动作槽（free 不占槽）──
     if econ and cost == "major":
@@ -3627,11 +3708,14 @@ def declare_intent(actor: str, intent: str, target: str = "",
     if (death := _maybe_player_death(enc, events)) is not None:
         return death
 
-    # ── §14-R2：行动经济下，未耗尽两槽且未显式 end_turn → 留在同一行动者，回合不过 ──
+    # ── §14-R2：行动经济下，未耗尽两槽且未显式 end_turn/recover → 留在同一行动者，回合不过 ──
     if econ:
-        turn_over = (intent == "end_turn") or (combatant.acted_major and combatant.acted_minor)
+        turn_over = (intent in ("end_turn", "recover")) or (combatant.acted_major and combatant.acted_minor)
     else:
         turn_over = True
+    # §14-R3：破防窗口在【破防者自己行动一回合】后关闭——它的回合结束即清 staggered
+    if turn_over and combatant.staggered:
+        combatant.staggered = False
     if econ and not turn_over and not all_enemies_dead:
         snapshot = _encounter_snapshot()
         return {
@@ -3728,6 +3812,24 @@ def enemy_suggest(enemy_id: str) -> dict:
     enemy = enc.combatants[enemy_id]
     profile = enemy.behavior_profile
 
+    def _ret(it, tgt, rs):
+        return {"ok": True, "enemy_id": enemy_id, "enemy_name": enemy.name,
+                "enemy_hp": f"{enemy.hp}/{enemy.max_hp}", "profile": profile,
+                "suggested_intent": it, "suggested_target": tgt,
+                "suggested_target_name": enc.combatants[tgt].name if tgt in enc.combatants else "",
+                "reason": rs}
+
+    # ── §14-R3 战术 AI 前置（优先级高于 profile 选择）──
+    # 破防中：只能挣扎复原，错失本回合（这是玩家削破韧条换来的窗口）
+    if enemy.staggered:
+        return _ret("recover", "", "破防中——本回合只能挣脱复原，错失一次行动")
+    # 蓄力已满：落下重击（若未被打断）
+    if enemy.windup:
+        wt = enemy.windup.get("target", "")
+        return _ret("release", wt, "蓄力已满——落下重击"
+                    + ("" if (wt in enc.combatants and not enc.combatants[wt].is_dead)
+                       else "（目标或已脱离，可能落空）"))
+
     # Determine possible targets (player and non-dead enemies on other sides)
     targets = [
         c for cid, c in enc.combatants.items()
@@ -3785,17 +3887,20 @@ def enemy_suggest(enemy_id: str) -> dict:
         suggested_target = targets[0].id
         reason = f"default(→aggressive): 攻击 {targets[0].name}"
 
-    return {
-        "ok": True,
-        "enemy_id": enemy_id,
-        "enemy_name": enemy.name,
-        "enemy_hp": f"{enemy.hp}/{enemy.max_hp}",
-        "profile": profile,
-        "suggested_intent": intent,
-        "suggested_target": suggested_target,
-        "suggested_target_name": enc.combatants[suggested_target].name if suggested_target in enc.combatants else "",
-        "reason": reason,
-    }
+    # ── §14-R3 战术后处理：若打算攻击，按触及/破防条决定 走位/蓄力/普攻 ──
+    if intent == "attack" and suggested_target in enc.combatants:
+        tcom = enc.combatants[suggested_target]
+        gap = enemy.rank + tcom.rank
+        if enc.action_economy and gap >= enemy.reach and enemy.rank > 0:
+            # 够不到目标 → 前压一排（近战进身；远程 reach 大不会触发）
+            intent, suggested_target = "move", "advance"
+            reason = f"够不到 {tcom.name}（gap {gap}≥触及 {enemy.reach}）——前压一排逼近"
+        elif enemy.max_poise > 0 and not enemy.windup:
+            # 精英/首领（有破防条）：起手蓄力重击，给玩家留打断窗口（削破韧条即可取消）
+            intent = "windup"
+            reason = f"蓄势——下回合对 {tcom.name} 落下重击；趁它收不住手时削破韧条可打断"
+
+    return _ret(intent, suggested_target, reason)
 
 
 @mcp.tool()

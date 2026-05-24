@@ -428,5 +428,113 @@ class OpportunityAttackTest(unittest.TestCase):
         self.assertFalse(any(e["detail"].get("opportunity") for e in r["events"]))
 
 
+class TacticalR3Test(unittest.TestCase):
+    """§14-R3：蓄力/打断（windup/release/poise/stagger）+ 敌人战术 AI。"""
+
+    def setUp(self):
+        self.assertTrue(mcp_server.start_game("aincrad")["ok"])
+
+    def tearDown(self):
+        if mcp_server.SESSION.in_combat:
+            mcp_server.end_combat(reason="t")
+
+    def _elite(self, max_poise=4, reach=1, e_rank=0):
+        mcp_server.start_combat(tactical=True, rank_depth=2, improvised=[
+            {"name": "石巨像", "archetype": "brute_mid", "count": 1,
+             "rank": e_rank, "reach": reach, "max_poise": max_poise}])
+        enc = mcp_server.SESSION.encounter
+        eid = next(c for c in enc.combatants if c.startswith("enemy_"))
+        enc.combatants["player"].hp = 100
+        enc.combatants[eid].hp = enc.combatants[eid].max_hp = 100
+        return enc, eid
+
+    def _activate(self, cid):
+        enc = mcp_server.SESSION.encounter
+        enc.active_idx = enc.turn_order.index(cid)
+        c = enc.combatants[cid]; c.acted_major = c.acted_minor = False
+
+    # ── 削韧 / 破防 ──
+    def test_poise_break_staggers_and_cancels_windup(self):
+        enc, eid = self._elite(max_poise=3)
+        e = enc.combatants[eid]; e.windup = {"target": "player"}
+        events = []
+        self.assertTrue(mcp_server._apply_poise(e, 3, events))   # 削满
+        self.assertTrue(e.staggered)
+        self.assertIsNone(e.windup)                              # 蓄力被打断
+        self.assertEqual(e.poise, 0)
+        self.assertTrue(any(ev.kind == "staggered" and ev.detail.get("windup_cancelled")
+                            for ev in events))
+
+    def test_normal_mob_has_no_poise(self):
+        enc, eid = self._elite(max_poise=0)
+        e = enc.combatants[eid]
+        self.assertFalse(mcp_server._apply_poise(e, 99, []))     # 杂兵无韧条
+        self.assertFalse(e.staggered)
+
+    def test_attacks_accrue_poise_and_interrupt(self):
+        enc, eid = self._elite(max_poise=4)
+        enc.combatants[eid].windup = {"target": "player"}
+        with patch("mcp_server.random.randint", side_effect=[18, 2, 18, 2]):
+            self._activate("player"); mcp_server.declare_intent("player", "attack", target=eid)
+            self._activate("player"); mcp_server.declare_intent("player", "attack", target=eid)
+        e = enc.combatants[eid]
+        self.assertTrue(e.staggered)
+        self.assertIsNone(e.windup)                              # 两击削破 → 打断蓄力
+
+    # ── 蓄力 / 释放 ──
+    def test_windup_sets_telegraph(self):
+        enc, eid = self._elite()
+        self._activate(eid)
+        r = mcp_server.declare_intent(eid, "windup", target="player")
+        self.assertTrue(r["ok"])
+        self.assertIsNotNone(enc.combatants[eid].windup)
+        self.assertTrue(any(e["kind"] == "windup_start" for e in r["events"]))
+        snap = next(c for c in r["encounter"]["combatants"] if c["id"] == eid)
+        self.assertTrue(snap.get("winding_up"))
+
+    def test_release_deals_charged_double(self):
+        mcp_server.start_combat(improvised=[{"name": "靶", "archetype": "brute_low", "count": 1}])
+        enc = mcp_server.SESSION.encounter
+        tid = next(c for c in enc.combatants if c.startswith("enemy_"))
+        enc.combatants[tid].hp = enc.combatants[tid].max_hp = 100
+        self._activate("player")
+        enc.combatants["player"].windup = {"target": tid, "damage_expr": "1d6",
+                                           "dmg_type": "slash", "scaling": None, "reach": 99}
+        with patch("mcp_server.random.randint", side_effect=[15, 3]):
+            r = mcp_server.declare_intent("player", "release")
+        hit = next(e for e in r["events"] if e["kind"] == "hit")
+        self.assertEqual(hit["detail"]["damage"], 6)             # 1d6=3 ×2 蓄力
+        self.assertTrue(hit["detail"]["charged"])
+        self.assertIsNone(enc.combatants["player"].windup)       # 用掉即清
+
+    def test_release_without_windup_errors(self):
+        mcp_server.start_combat(improvised=[{"name": "靶", "archetype": "brute_low", "count": 1}])
+        self._activate("player")
+        self.assertFalse(mcp_server.declare_intent("player", "release")["ok"])
+
+    # ── 敌人战术 AI ──
+    def test_ai_elite_suggests_windup(self):
+        enc, eid = self._elite()
+        self.assertEqual(mcp_server.enemy_suggest(eid)["suggested_intent"], "windup")
+
+    def test_ai_staggered_suggests_recover(self):
+        enc, eid = self._elite()
+        enc.combatants[eid].staggered = True
+        self.assertEqual(mcp_server.enemy_suggest(eid)["suggested_intent"], "recover")
+
+    def test_ai_pending_windup_suggests_release(self):
+        enc, eid = self._elite()
+        enc.combatants[eid].windup = {"target": "player"}
+        self.assertEqual(mcp_server.enemy_suggest(eid)["suggested_intent"], "release")
+
+    def test_ai_backline_out_of_reach_advances(self):
+        # 后排近战(reach1,rank1)够不到前排玩家(rank0) → 建议前压
+        enc, eid = self._elite(reach=1, e_rank=1)
+        enc.combatants["player"].rank = 0
+        s = mcp_server.enemy_suggest(eid)
+        self.assertEqual(s["suggested_intent"], "move")
+        self.assertEqual(s["suggested_target"], "advance")
+
+
 if __name__ == "__main__":
     unittest.main()
