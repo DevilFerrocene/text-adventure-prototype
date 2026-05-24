@@ -101,6 +101,42 @@ button:disabled{opacity:.4;cursor:not-allowed}
 #status.ok .probs{color:var(--green)}
 .ro-note{font-family:var(--mono);font-size:11px;color:var(--amber);padding:10px 14px;
   border:1px dashed var(--line);border-radius:6px;margin-bottom:14px}
+/* 棋盘可视化编辑器 */
+.gridwrap{border:1px solid var(--line-soft);border-radius:8px;padding:10px;background:var(--bg-soft)}
+.gd-dim{display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.gd-dim label{font-family:var(--mono);font-size:10px;color:var(--fg-mute)}
+.gd-dim input{width:54px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;color:var(--fg)}
+.gd-dim .sp{flex:1}
+.gd-tools{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px;align-items:center}
+.gd-mode{font-family:var(--mono);font-size:11px;color:var(--fg-mute);background:var(--panel);
+  border:1px solid var(--line);border-radius:5px;padding:4px 9px;cursor:pointer}
+.gd-mode:hover{color:var(--fg-dim)}
+.gd-mode.active{color:var(--bg);background:var(--amber);border-color:var(--amber);font-weight:500}
+.gd-pick{background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:4px 7px;
+  font-family:var(--mono);font-size:11px;color:var(--fg);max-width:170px}
+.gd-board{display:grid;gap:3px;margin:4px 0}
+.gd-cell{aspect-ratio:1;border:1px solid var(--line-soft);border-radius:4px;background:var(--panel);
+  cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  position:relative;padding:2px;overflow:hidden;transition:.1s}
+.gd-cell:hover{border-color:var(--amber);background:var(--bg)}
+.gd-cell.blocked{background:repeating-linear-gradient(45deg,var(--line-soft),var(--line-soft) 3px,transparent 3px,transparent 6px)}
+.gd-cell .tk{font-size:9px;line-height:1.15;text-align:center;color:var(--fg-dim);word-break:break-all}
+.gd-cell .tk.object{color:var(--amber)} .gd-cell .tk.exit{color:var(--cyan)}
+.gd-cell .tk.ambient{color:var(--fg-mute)} .gd-cell .tk.landmark{color:var(--violet)}
+.gd-cell .tk.poi{color:var(--green);font-size:14px;font-weight:600}
+.gd-cell .entry{position:absolute;top:1px;left:2px;font-family:var(--mono);font-size:8px;
+  color:var(--green);font-weight:700}
+.gd-cell .xy{position:absolute;bottom:0;right:2px;font-family:var(--mono);font-size:7px;color:var(--fg-mute);opacity:.5}
+.gd-legend{font-family:var(--mono);font-size:9.5px;color:var(--fg-mute);margin-top:6px;line-height:1.6}
+.gd-pois{margin-top:10px;border-top:1px solid var(--line-soft);padding-top:8px}
+.gd-poi{border:1px solid var(--line-soft);border-radius:6px;padding:8px;margin-bottom:7px}
+.gd-poi .ph{display:flex;gap:6px;align-items:center;margin-bottom:5px}
+.gd-poi .ph .cell{font-family:var(--mono);font-size:10px;color:var(--green);flex:0 0 auto}
+.gd-poi .ph input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px}
+.gd-poi textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:4px;
+  font-family:var(--mono);font-size:11px;color:var(--fg);padding:5px;min-height:54px;margin-top:4px}
+.gd-poi textarea.bad{border-color:var(--red)}
+.gd-bar{display:flex;gap:6px;margin-top:8px}
 ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
 #toast{position:fixed;bottom:48px;left:50%;transform:translateX(-50%) translateY(20px);
   background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:9px 16px;
@@ -164,7 +200,7 @@ const SCHEMA={
     {k:"enemies",label:"刷怪池 敌人id",type:"slist"},
     {k:"ambient",label:"陈设 名:类别",type:"slist",hint:"如 桌上的酒瓶:bottle"},
     {k:"tags",label:"标签",type:"slist"},
-    {k:"grid",label:"二维棋盘 grid",type:"json",hint:"width/height/entry/objects/exits…（非必填）"},
+    {k:"grid",label:"二维棋盘 grid",type:"grid",hint:"点格子放置；进门点/障碍/物体/陈设/出口/地标/探索点"},
     {k:"on_first_enter",label:"首次进入事件",type:"json"},
   ],
   objects:[
@@ -486,6 +522,7 @@ function fieldEl(f,obj){
   else if(f.type==="slist"||f.type==="slistnum"){ el=slistEl(get()||[],v=>set(v),f.type==="slistnum"); }
   else if(f.type==="kv"||f.type==="kvnum"){ el=kvEl(get()||{},v=>set(v),f.type==="kvnum"); }
   else if(f.type==="json"){ el=jsonEl(get(),v=>set(v)); }
+  else if(f.type==="grid"){ el=gridEditorEl(obj,()=>touch()); }
   wrap.appendChild(el);
   if(f.hint){ const h=document.createElement("div"); h.className="hint"; h.textContent=f.hint; wrap.appendChild(h); }
   return wrap;
@@ -542,6 +579,148 @@ function jsonEl(val,onchange){
     catch(e){ ta.classList.add("bad"); }
   };
   return ta;
+}
+
+// ── 棋盘可视化编辑器：点格子放置实体；进门点/障碍/物体/陈设/出口/地标/探索点 ──
+const GD_MODES=[
+  {m:"entry",   label:"进门点"},
+  {m:"blocked", label:"障碍"},
+  {m:"object",  label:"物体"},
+  {m:"ambient", label:"陈设"},
+  {m:"exit",    label:"出口"},
+  {m:"landmark",label:"地标"},
+  {m:"poi",     label:"探索点"},
+  {m:"erase",   label:"擦除"},
+];
+const GD_LAYER_MAP={object:"objects",ambient:"ambient",exit:"exits",landmark:"landmarks"};
+function defaultGrid(){ return {width:5,height:5,entry:[2,2],blocked:[],objects:{},ambient:{},exits:{},landmarks:{},pois:[]}; }
+function ambientNames(room){ return (room.ambient||[]).map(s=>String(s).split(":")[0].trim()).filter(Boolean); }
+function objName(id){ const o=(W.objects||{})[id]; return (o&&o.name)||id; }
+function eqc(a,b){ return Array.isArray(a)&&Array.isArray(b)&&a[0]===b[0]&&a[1]===b[1]; }
+
+function gridEditorEl(room,onChange){
+  const box=document.createElement("div");
+  let mode="entry", raw=false;
+  const sel={object:"",ambient:"",exit:"",landmark:""};
+  let landmarkName="";
+  const G=()=>room.grid;
+
+  function ensureGrids(){ const g=G(); for(const k of ["blocked"]) if(!Array.isArray(g[k])) g[k]=[];
+    for(const k of ["objects","ambient","exits","landmarks"]) if(!g[k]) g[k]={};
+    if(!Array.isArray(g.pois)) g.pois=[]; if(!Array.isArray(g.entry)) g.entry=[0,0]; }
+  function commit(){ onChange(); }
+  function uniqPoi(g){ let i=1,id; do{ id="poi_"+i++; }while((g.pois||[]).some(p=>p.id===id)); return id; }
+  function removeAt(x,y){ const g=G();
+    for(const m of ["objects","ambient","exits","landmarks"]) for(const k of Object.keys(g[m]||{})) if(eqc(g[m][k],[x,y])) delete g[m][k];
+    g.pois=(g.pois||[]).filter(p=>!eqc(p.cell,[x,y]));
+    g.blocked=(g.blocked||[]).filter(c=>!eqc(c,[x,y])); }
+  function occAt(x,y){ const g=G(); const out=[];
+    for(const lm of ["object","ambient","exit","landmark"]){ const mp=GD_LAYER_MAP[lm];
+      for(const k of Object.keys(g[mp]||{})) if(eqc(g[mp][k],[x,y])) out.push({layer:lm,key:k}); }
+    (g.pois||[]).forEach(p=>{ if(eqc(p.cell,[x,y])) out.push({layer:"poi",key:p.id}); });
+    return out; }
+  function clampGrid(){ const g=G(),W0=g.width,H0=g.height; const inb=c=>c[0]>=0&&c[0]<W0&&c[1]>=0&&c[1]<H0;
+    g.blocked=(g.blocked||[]).filter(inb);
+    for(const m of ["objects","ambient","exits","landmarks"]) for(const k of Object.keys(g[m])) if(!inb(g[m][k])) delete g[m][k];
+    g.pois=(g.pois||[]).filter(p=>inb(p.cell));
+    g.entry=[Math.min(Math.max(g.entry[0],0),W0-1),Math.min(Math.max(g.entry[1],0),H0-1)]; }
+
+  function placeAt(x,y){ const g=G();
+    if(mode==="entry"){ if((g.blocked||[]).some(c=>eqc(c,[x,y]))) return toast("障碍格不能当进门点"); g.entry=[x,y]; }
+    else if(mode==="blocked"){
+      if((g.blocked||[]).some(c=>eqc(c,[x,y]))) g.blocked=g.blocked.filter(c=>!eqc(c,[x,y]));
+      else { if(eqc(g.entry,[x,y])) return toast("进门点不能设为障碍"); removeAt(x,y); g.blocked.push([x,y]); } }
+    else if(mode==="erase"){ removeAt(x,y); }
+    else if(mode==="poi"){ if(occAt(x,y).some(o=>o.layer==="poi")) return;
+      g.blocked=g.blocked.filter(c=>!eqc(c,[x,y]));
+      g.pois.push({id:uniqPoi(g),cell:[x,y],hint:"",payload:{kind:"loot",items:[],reveal:""}}); }
+    else { let k=mode==="landmark"?landmarkName.trim():sel[mode];
+      if(!k) return toast(mode==="landmark"?"先填地标名":"先在右侧选要放置的对象");
+      g.blocked=g.blocked.filter(c=>!eqc(c,[x,y])); g[GD_LAYER_MAP[mode]][k]=[x,y]; }
+    commit(); redraw(); }
+
+  function redraw(){
+    box.innerHTML="";
+    if(!G()){ const b=document.createElement("button"); b.textContent="＋ 启用棋盘";
+      b.onclick=()=>{ room.grid=defaultGrid(); commit(); redraw(); }; box.appendChild(b); return; }
+    box.className="gridwrap"; ensureGrids(); const g=G();
+    if(raw){ const ta=jsonEl(g,v=>{ if(v){ room.grid=v; commit(); } });
+      ta.style.minHeight="220px"; box.appendChild(ta);
+      box.appendChild(barEl()); return; }
+    // 尺寸
+    const dim=document.createElement("div"); dim.className="gd-dim";
+    dim.append(numIn("宽",g.width,v=>{ g.width=Math.max(1,v); clampGrid(); commit(); redraw(); }),
+               numIn("高",g.height,v=>{ g.height=Math.max(1,v); clampGrid(); commit(); redraw(); }));
+    const sp=document.createElement("div"); sp.className="sp"; dim.appendChild(sp);
+    box.appendChild(dim);
+    // 模式条
+    const tools=document.createElement("div"); tools.className="gd-tools";
+    for(const md of GD_MODES){ const c=document.createElement("div");
+      c.className="gd-mode"+(mode===md.m?" active":""); c.textContent=md.label;
+      c.onclick=()=>{ mode=md.m; redraw(); }; tools.appendChild(c); }
+    // 当前模式的取值器
+    if(mode==="object"||mode==="ambient"||mode==="exit"){
+      const opts = mode==="object"?(room.objects||[]) : mode==="ambient"?ambientNames(room) : Object.keys(room.exits||{});
+      const s=document.createElement("select"); s.className="gd-pick";
+      if(!opts.length){ const o=document.createElement("option"); o.textContent="（空，先在上方列表加）"; s.appendChild(o); s.disabled=true; }
+      for(const o of opts){ const op=document.createElement("option"); op.value=o;
+        op.textContent=mode==="object"?objName(o):o; s.appendChild(op); }
+      if(!sel[mode]||!opts.includes(sel[mode])) sel[mode]=opts[0]||"";
+      s.value=sel[mode]; s.onchange=()=>sel[mode]=s.value; tools.appendChild(s);
+    } else if(mode==="landmark"){
+      const i=document.createElement("input"); i.className="gd-pick"; i.placeholder="地标名，如 吧台";
+      i.value=landmarkName; i.oninput=()=>landmarkName=i.value; tools.appendChild(i);
+    }
+    box.appendChild(tools);
+    // 棋盘
+    const board=document.createElement("div"); board.className="gd-board";
+    board.style.gridTemplateColumns="repeat("+g.width+",1fr)";
+    for(let y=0;y<g.height;y++) for(let x=0;x<g.width;x++){
+      const cell=document.createElement("div"); cell.className="gd-cell";
+      if((g.blocked||[]).some(c=>eqc(c,[x,y]))) cell.classList.add("blocked");
+      if(eqc(g.entry,[x,y])){ const e=document.createElement("span"); e.className="entry"; e.textContent="进"; cell.appendChild(e); }
+      for(const o of occAt(x,y)){ const t=document.createElement("div"); t.className="tk "+o.layer;
+        t.textContent=o.layer==="poi"?"?":(o.layer==="object"?objName(o.key):o.key); cell.appendChild(t); }
+      const xy=document.createElement("span"); xy.className="xy"; xy.textContent=x+","+y; cell.appendChild(xy);
+      cell.onclick=()=>placeAt(x,y); board.appendChild(cell);
+    }
+    box.appendChild(board);
+    const lg=document.createElement("div"); lg.className="gd-legend";
+    lg.textContent="进=进门落点　斜纹=障碍　黄=物体 青=出口 灰=陈设 紫=地标 绿?=探索点　·　选模式后点格子放置/移动，「擦除」清格";
+    box.appendChild(lg);
+    // 探索点编辑
+    if((g.pois||[]).length){ box.appendChild(poiListEl(g)); }
+    box.appendChild(barEl());
+  }
+  function poiListEl(g){
+    const wrap=document.createElement("div"); wrap.className="gd-pois";
+    const h=document.createElement("div"); h.className="label"; h.textContent="探索点 "+g.pois.length+" 个（payload 决定揭示内容）"; wrap.appendChild(h);
+    g.pois.forEach((p,i)=>{
+      const row=document.createElement("div"); row.className="gd-poi";
+      const ph=document.createElement("div"); ph.className="ph";
+      const cell=document.createElement("span"); cell.className="cell"; cell.textContent="@"+p.cell[0]+","+p.cell[1];
+      const idi=document.createElement("input"); idi.value=p.id; idi.placeholder="id"; idi.style.flex="0 0 28%";
+      idi.onchange=()=>{ p.id=idi.value; commit(); };
+      const hint=document.createElement("input"); hint.value=p.hint||""; hint.placeholder="明面感官提示 hint（不剧透）";
+      hint.oninput=()=>{ p.hint=hint.value; commit(); };
+      const del=document.createElement("button"); del.textContent="×"; del.onclick=()=>{ g.pois.splice(i,1); commit(); redraw(); };
+      ph.append(cell,idi,hint,del); row.appendChild(ph);
+      const pl=jsonEl(p.payload,v=>{ if(v){ p.payload=v; commit(); } }); row.appendChild(pl);
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+  function barEl(){ const bar=document.createElement("div"); bar.className="gd-bar";
+    const t=document.createElement("button"); t.textContent=raw?"◀ 可视化":"源码 JSON ▾";
+    t.onclick=()=>{ raw=!raw; redraw(); };
+    const off=document.createElement("button"); off.className="danger"; off.textContent="停用棋盘";
+    off.onclick=()=>{ if(confirm("停用此房间的棋盘？格子布局会清空。")){ room.grid=null; commit(); redraw(); } };
+    bar.append(t,off); return bar; }
+  function numIn(lbl,val,on){ const w=document.createElement("label"); w.textContent=lbl+" ";
+    const i=document.createElement("input"); i.type="number"; i.value=val; i.min=1;
+    i.onchange=()=>on(Number(i.value)); w.appendChild(i); return w; }
+
+  redraw(); return box;
 }
 
 // 编辑后：刷新计数 + 防抖校验
