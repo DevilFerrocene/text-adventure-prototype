@@ -758,9 +758,7 @@ async def editor_save_world(name: str, request: Request) -> JSONResponse:
     safe = _safe_world_name(name)
     if not safe:
         return JSONResponse({"ok": False, "error": "世界名只能含字母/数字/下划线/连字符/中文，长度 1–40。"})
-    existing = mcp_server.WORLDS.get(safe)
-    if existing is not None and not hasattr(existing, "data"):   # 内置（Python 模块）世界
-        return JSONResponse({"ok": False, "error": f"{safe!r} 是内置世界，不能覆盖。请另存为别的名字。"})
+    # 不保护内置世界：同名保存即写一份 JSON 覆盖层（删掉该 JSON 文件即还原内置）。
     data = await request.json()
     data["name"] = safe
     try:

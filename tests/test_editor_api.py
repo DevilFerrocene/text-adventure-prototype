@@ -14,14 +14,16 @@ import standalone.web as web
 class EditorApiTest(unittest.TestCase):
     def setUp(self):
         self.c = TestClient(web.app)
-        # 清掉测试残留世界
-        for p in mcp_server.WORLDS_DIR.glob("ed_test*.json"):
-            p.unlink()
-        mcp_server.load_json_worlds()
+        self._cleanup()
 
     def tearDown(self):
+        self._cleanup()
+
+    def _cleanup(self):
+        # 清掉测试残留世界 + 可能写出的内置覆盖层，恢复纯内置注册
         for p in mcp_server.WORLDS_DIR.glob("ed_test*.json"):
             p.unlink()
+        (mcp_server.WORLDS_DIR / "aincrad.json").unlink(missing_ok=True)
         mcp_server.load_json_worlds()
 
     def _aincrad_export(self):
@@ -65,9 +67,20 @@ class EditorApiTest(unittest.TestCase):
         listed = self.c.get("/editor/worlds").json()["worlds"]
         self.assertTrue(any(w["name"] == "ed_test1" and w["editable"] for w in listed))
 
-    def test_cannot_overwrite_builtin(self):
+    def test_save_over_builtin_creates_override(self):
+        # 不再保护内置：同名保存写一份 JSON 覆盖层，aincrad 变为可编辑的 JsonWorld
         out = self.c.post("/editor/world/aincrad", json=self._aincrad_export()).json()
-        self.assertFalse(out["ok"])
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["problems"], [])
+        self.assertTrue(hasattr(mcp_server.WORLDS["aincrad"], "data"))
+        self.assertTrue((mcp_server.WORLDS_DIR / "aincrad.json").exists())
+
+    def test_delete_override_restores_builtin(self):
+        self.c.post("/editor/world/aincrad", json=self._aincrad_export())
+        self.assertTrue(hasattr(mcp_server.WORLDS["aincrad"], "data"))  # 覆盖层
+        self.c.delete("/editor/world/aincrad")
+        # 删掉覆盖层 → 还原内置 Python 模块（不再有 .data）
+        self.assertFalse(hasattr(mcp_server.WORLDS["aincrad"], "data"))
 
     def test_rejects_path_traversal_name(self):
         out = self.c.post("/editor/world/..%2Fevil", json={"name": "x"})

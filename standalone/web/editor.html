@@ -267,7 +267,7 @@ async function loadWorldList(sel){
   const s=$("#world-sel"); s.innerHTML="";
   for(const w of r.worlds){
     const o=document.createElement("option");
-    o.value=w.name; o.textContent=w.name+(w.builtin?" （内置·只读）":"");
+    o.value=w.name; o.textContent=w.name+(w.builtin?" （内置·可覆盖）":"");
     s.appendChild(o);
   }
   const errs=Object.entries(r.errors||{});
@@ -280,7 +280,7 @@ async function openWorld(name){
   if(!r.ok){ toast(r.error||"打开失败"); return; }
   W=r.world; curName=name; editable=r.editable; curId=null;
   $("#world-sel").value=name;
-  $("#btn-save").disabled=false;        // 内置也能编辑后另存；保存会被后端挡（提示另存）
+  $("#btn-save").disabled=false;        // 任何世界都能直接保存（内置同名保存即写覆盖层）
   renderTabs(); selectTab(curTab); validateNow();
 }
 
@@ -331,7 +331,7 @@ async function validateNow(){
 }
 async function playtest(){
   if(!W) return;
-  // 先保存（试玩的是已注册世界）；内置只读则提示另存
+  // 先保存（试玩的是已注册世界）
   const r=await api("POST","/editor/world/"+encodeURIComponent(curName),W);
   if(!r.ok){ toast("试玩前需先保存："+r.error); return; }
   await loadWorldList(r.name); curName=r.name;

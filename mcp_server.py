@@ -72,31 +72,30 @@ SAVE_DIR.mkdir(exist_ok=True)
 WORLDS_DIR = _HERE / "worlds"
 WORLDS_DIR.mkdir(exist_ok=True)
 
-# 内置（Python 模块）世界。JSON 世界在下面扫描注入，内置同名优先（不被 JSON 盖掉）。
-WORLDS = {
+# 内置（Python 模块）世界——不可删的底座。
+BUILTIN_WORLDS = {
     "aincrad": aincrad_module,
 }
+
+# 对外世界注册表：内置 + JSON 叠加（JSON 同名【覆盖】内置，即"编辑内置"=存一份 JSON 覆盖层）。
+# 由 load_json_worlds() 每次重建，删掉覆盖层 JSON 即还原内置。
+WORLDS: Dict[str, object] = {}
 
 # JSON 世界加载错误（坏 JSON / 结构错），供编辑器回显，不让坏文件搞崩服务启动。
 WORLD_LOAD_ERRORS: Dict[str, str] = {}
 
 
 def load_json_worlds():
-    """扫 worlds/*.json，把每个文件注册成 JsonWorld。注册键 = data['name'] 或文件名。
-    内置世界优先：同名 JSON 不覆盖内置。可重复调用（编辑器保存后热刷新）。"""
+    """重建 WORLDS：先铺内置，再用 worlds/*.json 叠加（同名 JSON 覆盖内置）。
+    可重复调用（编辑器保存/删除后热刷新）。原地清空+回填，保持 WORLDS 引用不变。"""
     WORLD_LOAD_ERRORS.clear()
-    builtin = {"aincrad"}
-    # 先清掉旧的 JSON 世界（保留内置），再重扫——这样删文件/改名能反映出来
-    for k in [k for k, v in WORLDS.items() if isinstance(v, JsonWorld)]:
-        WORLDS.pop(k, None)
+    WORLDS.clear()
+    WORLDS.update(BUILTIN_WORLDS)
     for path in sorted(WORLDS_DIR.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             name = data.get("name") or path.stem
-            if name in builtin:
-                WORLD_LOAD_ERRORS[path.name] = f"世界名 {name!r} 与内置世界冲突，已跳过"
-                continue
-            WORLDS[name] = JsonWorld(data, name)
+            WORLDS[name] = JsonWorld(data, name)   # 同名覆盖内置
         except Exception as e:
             WORLD_LOAD_ERRORS[path.name] = f"{type(e).__name__}: {e}"
 
