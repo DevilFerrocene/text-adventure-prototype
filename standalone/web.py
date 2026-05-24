@@ -478,6 +478,28 @@ def panels() -> JSONResponse:
     return JSONResponse(panels_payload())
 
 
+@app.post("/combat_move")
+async def combat_move(request: Request) -> JSONResponse:
+    """战斗中点棋盘空格走位：引擎直接 declare_intent move 到 (x,y)（坐标不进 GM）。
+    回传走位事件(含借机攻击)、新战局 hud/panels、next_actor——前端据此渲染 + 决定是否让 GM 续敌方回合。"""
+    s = mcp_server.SESSION
+    if not s.started or s.encounter is None:
+        return JSONResponse({"ok": False, "error": "不在战斗中。"})
+    body = await request.json()
+    res = mcp_server.declare_intent("player", "move", target=f"{int(body.get('x', -1))},{int(body.get('y', -1))}")
+    out = dict(res)
+    if res.get("ok"):
+        enc = s.encounter
+        names = {c.id: c.name for c in enc.combatants.values()} if enc else {}
+        steps = next((ev.get("detail", {}).get("steps") for ev in res.get("events", [])
+                      if ev.get("kind") == "move"), None)
+        out["note"] = f"你走位 {steps} 步。" if steps else "你走位。"
+        out["combat_log"] = _combat_log_lines(res.get("events", []), names)
+        out["hud"] = hud_payload()
+        out["panels"] = panels_payload()
+    return JSONResponse(out)
+
+
 @app.post("/move_cell")
 async def move_cell(request: Request) -> JSONResponse:
     """前端点击棋盘空格走位：引擎直接寻路移动（不走 GM、不泄坐标）。

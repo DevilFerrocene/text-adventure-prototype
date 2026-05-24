@@ -735,12 +735,29 @@ document.addEventListener('click',e=>{
   if(named && !busy){ if(boardTip) boardTip.style.display='none'; sendTurn(named.dataset.move); return; }
   const cell=e.target.closest('.bcell[data-cell]');
   if(cell && !busy){
-    if(window.PANELS && window.PANELS.board && window.PANELS.board.in_combat){
-      addSystem('战斗中走位请在下方输入（如「走向X」逼近、「拉开距离」）。',''); return;
-    }
-    const [x,y]=cell.dataset.cell.split(',').map(Number); moveToCell(x,y);
+    const [x,y]=cell.dataset.cell.split(',').map(Number);
+    const inCombat=window.PANELS && window.PANELS.board && window.PANELS.board.in_combat;
+    if(inCombat) combatMove(x,y); else moveToCell(x,y);
   }
 });
+async function combatMove(x,y){
+  if(busy) return;
+  if(boardTip) boardTip.style.display='none';
+  try{
+    const r=await (await fetch('/combat_move',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({x,y})})).json();
+    if(!r.ok){ addSystem('✗ '+(r.error||'走不了'),'fail'); return; }
+    if(r.note) addSystem(r.note,'');
+    (r.combat_log||[]).forEach(l=>addSystem(l,''));   // 借机攻击等结算行
+    if(r.hud) renderHud(r.hud);
+    if(r.panels){ window.PANELS=r.panels; renderLocation(r.panels); renderSceneObjects(r.panels);
+      renderEnvironment(r.panels); renderQuickCmds(r.panels);
+      if(drawerTab && $('#drawer').classList.contains('open')) renderDrawer(drawerTab); }
+    if(r.player_died){ addSystem('你倒下了——被烙印拽回营地。',''); return; }
+    // 走位用掉的是小动；若回合就此转给敌人 → 让 GM 续敌方回合并叙事
+    if(r.next_actor && r.next_actor!=='player') sendTurn('');
+  }catch(e){ addSystem('✗ 走位失败：'+e,'fail'); }
+}
 async function moveToCell(x,y){
   if(busy) return;
   if(boardTip) boardTip.style.display='none';
@@ -926,7 +943,7 @@ function renderBoard(b, avail=320, compact=false){
       let act='';
       if(t && !here){
         const cmd = t.kind==='exit' ? `向${DIR_CN[t.dir]||t.dir}走`
-                  : t.kind==='enemy' ? `走向${t.name}`
+                  : t.kind==='enemy' ? (b.in_combat?`攻击${t.name}`:`走向${t.name}`)
                   : `走到${t.name}`;
         act = ` data-move="${esc2(cmd)}"`;
       }else if(emptyWalkable){
