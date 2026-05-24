@@ -26,6 +26,8 @@ def add_all(world):
         zone="雾语草原·营地",
         coords=(0, 0),
         tags=["safe_zone", "no_combat", "respawn_point", "floor_1"],
+        ambient=["磨剑石:misc", "成堆的补给木箱:furniture", "篝火边的劈柴:club",
+                 "拴马桩旁的石块:rock"],
     ))
 
     # ── 破局路一：锈角酒馆 + 必触发的斗殴 ───────────────────────────
@@ -46,6 +48,8 @@ def add_all(world):
         zone="锈角酒馆",
         coords=(1, 0),
         tags=["safe_zone", "social", "floor_1"],
+        ambient=["桌上的酒瓶:bottle", "长条木桌:furniture", "翻倒的木凳:furniture",
+                 "壁炉边的拨火棍:club", "吊着的油灯:misc", "墙角的空酒坛:bottle"],
     ))
 
     world.add_room(Room(
@@ -65,6 +69,8 @@ def add_all(world):
         coords=(0, 1),
         tags=["field", "spawn_ground", "floor_1", "misty"],
         enemies=["killer_rabbit", "frenzy_boar", "gale_wolf", "mistbloom"],
+        ambient=["没膝的草浪:foliage", "零星的碎石:rock", "风干的兽骨:misc",
+                 "半埋的朽木桩:furniture", "尖锐的断枝:club"],
     ))
 
     # ── 林边 / 树林（破局路三：闯林进守林员小屋取手斧）──────────────
@@ -87,6 +93,8 @@ def add_all(world):
         coords=(-1, 1),
         tags=["forest", "risky", "floor_1", "misty", "spawn_ground"],
         enemies=["gale_wolf"],
+        ambient=["半垂的枯枝:club", "厚厚的针叶层:foliage", "倒伏的朽木:furniture",
+                 "松动的石块:rock", "缠人的藤蔓:foliage", "尖头的断木刺:blade"],
     ))
     world.add_room(Room(
         id="forester_hut",
@@ -103,6 +111,8 @@ def add_all(world):
         zone="守林员小屋",
         coords=(-2, 1),
         tags=["hidden", "shelter", "floor_1"],
+        ambient=["积灰的旧工具:misc", "墙上的锈钉:blade", "劈好的柴火:club",
+                 "塌了的吊床:foliage", "桌上的空酒瓶:bottle"],
     ))
 
     world.add_room(Room(
@@ -124,6 +134,8 @@ def add_all(world):
         coords=(0, 2),
         tags=["dungeon", "trap", "floor_1", "labyrinth", "spawn_ground"],
         enemies=["gale_wolf", "shadow_lurker"],
+        ambient=["碎裂的石砖:rock", "崩落的廊柱残段:club", "墙缝里的骨殖:misc",
+                 "锈蚀的断剑:blade"],
     ))
 
     world.add_room(Room(
@@ -145,6 +157,7 @@ def add_all(world):
         coords=(0, 3),
         tags=["boss_room", "floor_1", "climax"],
         enemies=["warden_bladeguard", "warden_gorehoof"],
+        ambient=["地上的碎石粉:rock", "崩落的石殿残块:rock", "前人遗落的断矛:blade"],
     ))
 
     # 雾隐洞窟（草原隐藏分支）
@@ -161,6 +174,8 @@ def add_all(world):
         exits={"out": "plains"},
         objects=["cave_chest", "cave_crystal"],
         area="苍穹回廊·第一层",
+        ambient=["发光的菌簇:foliage", "散落的白骨:misc", "松动的钟乳石:rock",
+                 "锋利的石笋碎片:blade"],
         zone="雾隐洞窟",
         coords=(1, 1),   # 草原东侧隐藏裂隙（与林边 -1,1 区分，避免地图叠格）
         tags=["hidden", "treasure", "floor_1"],

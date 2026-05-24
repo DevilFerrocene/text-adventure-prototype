@@ -114,6 +114,35 @@ def _require_started() -> Optional[dict]:
 # 否则 GM 会"知道这是刷怪区"而元游戏。GM 只该从 spawned/enemy_profiles 知道【在场】的怪。
 _HIDDEN_SCENE_TAGS = {"spawn_ground"}
 
+# ── 冷物体（环境陈设）类别 → 解冻模板 ───────────────────────────────
+# 房间用 Room.ambient=["名字:类别",…] 廉价铺陈设；玩家碰它时 warm_object 据类别【确定性】
+# 材质化成即兴物（grab=拿来用，None=太大/不便携，只能砸/掀/借势）。bounded 字段经 add_improvised 钳。
+AMBIENT_KINDS = {
+    "bottle":    {"label": "瓶罐", "grab": {"category": "tool", "equip_slot": "weapon",
+                                            "damage_expr": "1d3", "damage_type": "slash"}},
+    "club":      {"label": "棍棒", "grab": {"category": "tool", "equip_slot": "weapon",
+                                            "damage_expr": "1d4", "damage_type": "blunt"}},
+    "rock":      {"label": "石块", "grab": {"category": "tool", "equip_slot": "weapon",
+                                            "damage_expr": "1d3", "damage_type": "blunt"}},
+    "blade":     {"label": "利器", "grab": {"category": "tool", "equip_slot": "weapon",
+                                            "damage_expr": "1d4", "damage_type": "pierce"}},
+    "furniture": {"label": "家具", "grab": None},   # 太大，搬不动——砸/掀作掩体
+    "foliage":   {"label": "草木", "grab": None},   # 当掩体/可燃，不入手
+    "misc":      {"label": "杂物", "grab": {"category": "trinket"}},
+}
+
+
+def _parse_ambient(room) -> list:
+    """解析 Room.ambient 的 "名字:类别" 字符串 → [(name, kind)]。无类别默认 misc。"""
+    out = []
+    for entry in (getattr(room, "ambient", None) or []):
+        if ":" in entry:
+            nm, kind = entry.split(":", 1)
+            out.append((nm.strip(), kind.strip()))
+        else:
+            out.append((entry.strip(), "misc"))
+    return out
+
 
 def _room_snapshot(world: GameWorld, state: GameState) -> dict:
     room = world.get_room(state.position)
@@ -199,6 +228,10 @@ def _room_snapshot(world: GameWorld, state: GameState) -> dict:
             key=lambda item: item["prompt_priority"],
             reverse=True,
         ),
+        # 冷物体：廉价环境陈设（只给名字+类别，玩家碰它经 warm_object 解冻）
+        "ambient": [{"name": nm, "kind": kind,
+                     "label": AMBIENT_KINDS.get(kind, AMBIENT_KINDS["misc"])["label"]}
+                    for nm, kind in _parse_ambient(room)],
     }
 
 
@@ -4397,6 +4430,48 @@ def add_improvised(items: list) -> dict:
         "rejected_reasons": reasons,
         "inventory": _inventory_snapshot(state),
     }
+
+
+@mcp.tool()
+def warm_object(name: str, action: str = "grab") -> dict:
+    """把当前场景的【冷物体/环境陈设】（酒瓶/桌椅/枯枝/碎石…，见 get_scene 的 `ambient`）
+    解冻成可交互实体。冷物体是一类陈设、不耗尽（抓一个还有一堆），玩家要拿来用就调它，别脑补。
+
+    Args:
+        name:   冷物体名字（取自 get_scene 的 `ambient[].name`；支持部分匹配）
+        action: "grab"=据类别确定性材质化成即兴物入背包（瓶=1d3斩/棍棒=1d4钝/石=1d3钝/
+                利器=1d4刺；家具/草木太大不入手）；"smash"=认可就地砸毁/点燃（叙事处理）。
+    """
+    if err := _require_started():
+        return err
+    state, world = SESSION.state, SESSION.world
+    room = world.get_room(state.position)
+    props = {nm: kind for nm, kind in _parse_ambient(room)} if room else {}
+    kind = props.get(name)
+    if kind is None:                       # 容错：部分匹配
+        for nm, k in props.items():
+            if name and (name in nm or nm in name):
+                name, kind = nm, k
+                break
+    if kind is None:
+        return {"ok": False,
+                "error": f"此处没有「{name}」这样的环境物。就地可用：{list(props.keys())}"}
+    spec = AMBIENT_KINDS.get(kind, AMBIENT_KINDS["misc"])
+    if action == "smash":
+        return {"ok": True, "smashed": name, "kind": kind,
+                "note": f"{name}（{spec['label']}）被就地砸毁/破坏——叙事处理即可；"
+                        "若要掉落碎块用 add_improvised，要造成伤害/点燃走 deal_damage。"}
+    if action != "grab":
+        return {"ok": False, "error": "action 只支持 grab / smash"}
+    grab = spec.get("grab")
+    if not grab:
+        return {"ok": False,
+                "error": f"{name}（{spec['label']}）太大/不便携，抓不起来当东西用。"
+                         "想用它就 action=smash 砸毁、或借势作掩体（走 defend / GM 裁定）。"}
+    item = {"id": f"imp_amb_{state.turn}_{abs(hash(name)) % 100000}", "name": name, **grab}
+    result = add_improvised([item])
+    result["warmed"] = {"name": name, "kind": kind, "label": spec["label"]}
+    return result
 
 
 @mcp.tool()

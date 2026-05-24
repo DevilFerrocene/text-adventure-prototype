@@ -390,7 +390,9 @@ async function sendTurn(text){
   const renderCard=(type,d)=>{
     if(type==='scene'){
       const objs=(d.objects||[]).join('、')||'—', exits=(d.exits||[]).join(' · ')||'—';
+      const amb=(d.ambient||[]).join('、');
       const html=`<div class="card-h">🔍 可查看</div><div class="card-b">${esc(objs)}</div>`+
+                 (amb?`<div class="card-h">🧺 就地可用</div><div class="card-b">${esc(amb)}</div>`:'')+
                  `<div class="card-h">🚪 出口</div><div class="card-b">${esc(exits)}</div>`;
       if(curScene) curScene.innerHTML=html; else curScene=mkCard('scene',html);
     }else if(type==='dice'){

@@ -475,6 +475,10 @@ class Room:
     enemies: List[str] = field(default_factory=list)
     on_first_enter: List[Dict[str, Any]] = field(default_factory=list)
     refresh_policy: str = "snapshot"   # snapshot / regenerate / static
+    # 冷物体（环境陈设）：廉价填充场景密度的字符串列表，格式 "名字:类别"（类别省略=misc）。
+    # 不建成型 GameObject——零 affordance/hp 成本，玩家碰它时经 warm_object 按类别确定性解冻
+    # (碎瓶=1d3斩、棍棒=1d4钝…)。一类陈设、不耗尽。成型物件仍留给值得设计的东西。
+    ambient: List[str] = field(default_factory=list)
 
 
 @dataclass

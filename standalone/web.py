@@ -161,7 +161,8 @@ def _render_events(name: str, result) -> list:
         objs = [o.get("name") for o in scene.get("objects", []) if o.get("name")]
         exits = [d for d, info in (scene.get("exits") or {}).items()
                  if not (isinstance(info, dict) and info.get("locked"))]
-        out.append(("scene", {"objects": objs, "exits": exits}))
+        ambient = [a.get("name") for a in scene.get("ambient", []) if a.get("name")]
+        out.append(("scene", {"objects": objs, "exits": exits, "ambient": ambient}))
     # 敌在场（未开战）：刷怪/进场后把在场敌人显成一张"敌在场"卡（开战后由 combat 面板接管，故跳过）
     profiles = result.get("enemy_profiles")
     if isinstance(profiles, list) and profiles and mcp_server.SESSION.encounter is None:
