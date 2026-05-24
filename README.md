@@ -51,6 +51,7 @@ LLM_MODEL=deepseek-chat                    # 你端点上的模型名
 
 ```bash
 python -m standalone.web     # Web 富界面（三栏 game-client）→ http://127.0.0.1:8000
+                             #   端口/地址可在 .env 改 WEB_PORT / WEB_HOST
                              #   顶栏「世界编辑器」入口 / 直接访问 /editor 改世界、一键试玩
 python -m standalone.cli     # 纯命令行一问一答（无界面）
 python -m standalone.cli --check   # 不调 LLM 的自检（验证工具桥/配置/世界完整性）
