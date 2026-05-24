@@ -23,6 +23,7 @@
 """
 
 import json
+import math
 import random
 import sys
 from dataclasses import dataclass, field
@@ -40,7 +41,7 @@ from core.types import (
     GameState, InventoryItem, ImprovisedItem, Affordance, Modifier,
     ActorProfile, VitalStats, WorldTime, QuestEntry,
     Combatant, Encounter, CombatEvent, EnemyTemplate,
-    Clue, DialogueEntry, RoomSnapshot,
+    Clue, DialogueEntry, RoomSnapshot, RoomGrid,
     Buff, BuffTick, GameObject,
     Skill, ActiveSkill, ReactiveSkill, Step, RuleBook,
     SKILL_STEP_VERBS, SKILL_TRIGGERS,
@@ -147,11 +148,259 @@ def _parse_ambient(room) -> list:
     return out
 
 
+# ── 二维棋盘空间核心：引擎独占坐标/寻路，对外只吐方位+距离 ───────────────
+# 设计：房间可选挂 RoomGrid。玩家是棋盘上一枚 token（state.cell）。物体/陈设/出口
+# 钉在格上。get_scene 据玩家位置算出每样东西的【方位(8向) + 距离(步) + 远近词】，
+# 把"手边可交互"与"四周得走过去"分开——GM 据此分前景/背景叙事，不再满屋平摊到眼前。
+# 没挂 grid 的房间 → 隐式"满屋皆在手边"（旧行为，零迁移）。坐标永不外泄给 GM。
+
+_BEARINGS_8 = ["东", "东北", "北", "西北", "西", "西南", "南", "东南"]  # 0°起每 45°
+
+
+def _room_grid(room):
+    return getattr(room, "grid", None) if room else None
+
+
+def _entry_cell(room) -> tuple:
+    """进房时玩家的落点：有 grid 用 grid.entry，否则 (0,0)（无 grid 房间忽略坐标）。"""
+    grid = _room_grid(room)
+    return tuple(grid.entry) if grid else (0, 0)
+
+
+def _cheb(a, b) -> int:
+    """切比雪夫距离 = 允许斜走时的步数。"""
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+
+
+def _bearing(src, dst) -> str:
+    """从 src 望向 dst 的 8 向方位（同格返回 ""）。x 东+ / y 南+（行号自上而下）。"""
+    dx, dy = dst[0] - src[0], dst[1] - src[1]
+    if dx == 0 and dy == 0:
+        return ""
+    ang = math.degrees(math.atan2(-dy, dx))   # 0=东, 90=北, -90=南
+    return _BEARINGS_8[int((ang % 360) / 45 + 0.5) % 8]
+
+
+def _proximity_label(d: int) -> str:
+    if d <= 0:
+        return "脚下"
+    if d == 1:
+        return "手边"
+    if d <= 3:
+        return "几步外"
+    if d <= 6:
+        return "房间另一头"
+    return "远处"
+
+
+def _grid_occupied(grid) -> set:
+    """被实体占据、不可站立的格（成型物 + 冷物体）。出口/地标/空地可站。"""
+    occ = set()
+    for c in grid.objects.values():
+        occ.add(tuple(c))
+    for c in grid.ambient.values():
+        occ.add(tuple(c))
+    return occ
+
+
+def _grid_standable(grid, cell, occupied=None) -> bool:
+    x, y = cell
+    if not (0 <= x < grid.width and 0 <= y < grid.height):
+        return False
+    if tuple(cell) in {tuple(b) for b in grid.blocked}:
+        return False
+    if occupied is None:
+        occupied = _grid_occupied(grid)
+    return tuple(cell) not in occupied
+
+
+def _grid_neighbors(cell):
+    x, y = cell
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx or dy:
+                yield (x + dx, y + dy)
+
+
+def _grid_pathfind(grid, start, goals) -> Optional[int]:
+    """BFS（8 向，避开 blocked/occupied）从 start 到 goals 任一格的最短步数；不可达返回 None。
+    start 已在 goals 中 → 0。goals 视为可站立目标格集合。"""
+    start = tuple(start)
+    goals = {tuple(g) for g in goals}
+    if not goals:
+        return None
+    if start in goals:
+        return 0
+    occupied = _grid_occupied(grid)
+    occupied.discard(start)                       # 玩家当前格不算障碍
+    seen = {start}
+    frontier = [start]
+    steps = 0
+    while frontier:
+        steps += 1
+        nxt = []
+        for cur in frontier:
+            for nb in _grid_neighbors(cur):
+                if nb in seen:
+                    continue
+                if nb in goals:
+                    return steps
+                if _grid_standable(grid, nb, occupied):
+                    seen.add(nb)
+                    nxt.append(nb)
+        frontier = nxt
+    return None
+
+
+def _grid_entity_cell(grid, *, object_id=None, ambient_name=None, exit_dir=None, landmark=None):
+    """取某实体在棋盘上的格 (x,y)，没钉到格上返回 None。"""
+    if object_id is not None:
+        c = grid.objects.get(object_id)
+    elif ambient_name is not None:
+        c = grid.ambient.get(ambient_name)
+    elif exit_dir is not None:
+        c = grid.exits.get(exit_dir)
+    elif landmark is not None:
+        c = grid.landmarks.get(landmark)
+    else:
+        c = None
+    return tuple(c) if c is not None else None
+
+
+def _goal_cells_for(grid, cell, standable_self: bool) -> set:
+    """要交互/到达某格时，玩家该站哪：可驻足点(出口/地标)就站其上；
+    实体格(物体/陈设)则站其相邻可立格。"""
+    if standable_self:
+        return {tuple(cell)}
+    occ = _grid_occupied(grid)
+    return {nb for nb in _grid_neighbors(cell) if _grid_standable(grid, nb, occ)} or {tuple(cell)}
+
+
+def _in_reach(state, room, cell) -> bool:
+    """玩家此刻够不够得着某格（切比雪夫≤1=手边/同格）。无 grid 或实体未钉格 → 视为够得着。"""
+    grid = _room_grid(room)
+    if not grid or cell is None:
+        return True
+    return _cheb(tuple(state.cell), tuple(cell)) <= 1
+
+
+def _approach_cell(state, room, cell, *, standable_self=False) -> dict:
+    """交互前确保走到够得着 cell 的位置：已在手边→不动；否则寻路走过去（更新 state.cell）。
+    返回 {ok, moved, steps, from, bearing}；不可达 → {ok:False, error}。
+    无 grid / 实体未钉格 → {ok:True, moved:False}（不门控）。"""
+    grid = _room_grid(room)
+    if not grid or cell is None:
+        return {"ok": True, "moved": False}
+    if _in_reach(state, room, cell):
+        return {"ok": True, "moved": False}
+    goals = _goal_cells_for(grid, cell, standable_self)
+    steps = _grid_pathfind(grid, state.cell, goals)
+    if steps is None:
+        return {"ok": False, "error": "中间隔着障碍，这么走过不去——换条路或先清开挡路的东西。"}
+    old = tuple(state.cell)
+    # 落到离目标最近的目标格（goals 里挑切比雪夫最小的，稳定可复现）
+    dest = min(goals, key=lambda g: (_cheb(g, tuple(cell)), g))
+    state.cell = dest
+    return {"ok": True, "moved": True, "steps": steps,
+            "from": _bearing(dest, old) or "原地", "bearing_to": _bearing(dest, tuple(cell))}
+
+
+def _resolve_grid_target(world, state, room, name: str):
+    """把玩家说的名字解析成棋盘实体：返回 (kind, ref, cell, standable_self, display)。
+    搜成型物(名/ id) → 冷物体 → 地标 → 出口（方向或目标房名）。支持部分匹配。找不到返回 None。"""
+    grid = _room_grid(room)
+    if not grid or not name:
+        return None
+    q = name.strip()
+    # 成型物：先精确 id，再按名字部分匹配
+    if q in grid.objects:
+        obj = world.get_object(q)
+        return ("object", q, tuple(grid.objects[q]), False, obj.name if obj else q)
+    for oid, cell in grid.objects.items():
+        obj = world.get_object(oid)
+        nm = obj.name if obj else oid
+        if q in nm or nm in q:
+            return ("object", oid, tuple(cell), False, nm)
+    # 冷物体
+    for nm, cell in grid.ambient.items():
+        if q == nm or q in nm or nm in q:
+            return ("ambient", nm, tuple(cell), False, nm)
+    # 地标（可驻足）
+    for nm, cell in grid.landmarks.items():
+        if q == nm or q in nm or nm in q:
+            return ("landmark", nm, tuple(cell), True, nm)
+    # 出口：方向或目标房名
+    for direction, cell in grid.exits.items():
+        target = room.exits.get(direction, "")
+        troom = world.get_room(target)
+        tname = troom.name if troom else target
+        if q == direction or q in direction or (tname and (q in tname or tname in q)):
+            return ("exit", direction, tuple(cell), True, f"{tname or direction}（{direction}）")
+    return None
+
+
+def _spatial_overview(world, state, room) -> Optional[dict]:
+    """给 GM 的空间快照：玩家大致方位 + 手边可交互的 + 四周得走过去的（带方位/距离/远近词）。
+    永不含原始坐标。无 grid 返回 None（调用方据此走旧的平铺行为）。"""
+    grid = _room_grid(room)
+    if not grid:
+        return None
+    pcell = tuple(state.cell)
+    entries = []  # (name, cat, cell)
+    for oid, cell in grid.objects.items():
+        obj = world.get_object(oid)
+        if not obj or obj.hidden:
+            continue
+        if obj.hidden_when_flag and state.flags.get(obj.hidden_when_flag):
+            continue
+        entries.append((obj.name, "物", tuple(cell)))
+    for nm, cell in grid.ambient.items():
+        entries.append((nm, "陈设", tuple(cell)))
+    for nm, cell in grid.landmarks.items():
+        entries.append((nm, "地标", tuple(cell)))
+    for direction, cell in grid.exits.items():
+        target = room.exits.get(direction, "")
+        troom = world.get_room(target)
+        entries.append((f"{troom.name if troom else target}（{direction}）", "出口", tuple(cell)))
+
+    at_hand, around = [], []
+    for nm, cat, cell in entries:
+        d = _cheb(pcell, cell)
+        if d <= 1:
+            at_hand.append({"name": nm, "cat": cat})
+        else:
+            around.append({"name": nm, "cat": cat, "bearing": _bearing(pcell, cell),
+                           "steps": d, "proximity": _proximity_label(d)})
+    around.sort(key=lambda e: e["steps"])
+
+    # 玩家大致在哪：取最近的出口/地标作锚
+    anchors = [(nm, cell) for nm, cat, cell in entries if cat in ("出口", "地标")]
+    locale = ""
+    if anchors:
+        nm, cell = min(anchors, key=lambda a: _cheb(pcell, a[1]))
+        d = _cheb(pcell, cell)
+        locale = f"在{nm}附近" if d <= 1 else f"离{nm}{_proximity_label(d)}（{_bearing(pcell, cell)}向）"
+    return {"enabled": True, "player_locale": locale, "at_hand": at_hand, "around": around}
+
+
+def _cell_annotation(state, room, cell) -> Optional[dict]:
+    """单个实体相对玩家的空间标注（方位/步数/远近/是否手边）。无 grid 或未钉格返回 None。"""
+    grid = _room_grid(room)
+    if not grid or cell is None:
+        return None
+    pcell = tuple(state.cell)
+    cell = tuple(cell)
+    d = _cheb(pcell, cell)
+    return {"bearing": _bearing(pcell, cell), "steps": d,
+            "proximity": _proximity_label(d), "in_reach": d <= 1}
+
+
 def _room_snapshot(world: GameWorld, state: GameState) -> dict:
     room = world.get_room(state.position)
     if not room:
         return {"error": f"未知房间 {state.position}"}
 
+    grid = _room_grid(room)
     objects_info = []
     priority_objects = []
     for oid in room.objects:
@@ -206,6 +455,8 @@ def _room_snapshot(world: GameWorld, state: GameState) -> dict:
                 }
                 for verb, aff in available_affordances
             ],
+            # 二维棋盘：此物相对玩家的方位/距离/是否手边（无 grid 或未钉格=None）
+            "spatial": _cell_annotation(state, room, grid.objects.get(oid)) if grid else None,
         })
 
     # exits: show locked status
@@ -233,8 +484,11 @@ def _room_snapshot(world: GameWorld, state: GameState) -> dict:
         ),
         # 冷物体：廉价环境陈设（只给名字+类别，玩家碰它经 warm_object 解冻）
         "ambient": [{"name": nm, "kind": kind,
-                     "label": AMBIENT_KINDS.get(kind, AMBIENT_KINDS["misc"])["label"]}
+                     "label": AMBIENT_KINDS.get(kind, AMBIENT_KINDS["misc"])["label"],
+                     "spatial": _cell_annotation(state, room, grid.ambient.get(nm)) if grid else None}
                     for nm, kind in _parse_ambient(room)],
+        # 二维棋盘空间总览（玩家方位 + 手边可交互 + 四周需走过去）；无 grid=None
+        "grid": _spatial_overview(world, state, room),
     }
 
 
@@ -910,6 +1164,7 @@ def start_game(world: str = "aincrad") -> dict:
     SESSION = Session(world_name=world, world=new_world, state=new_state)
     # 刷怪：若开局房间就是刷怪场，进场即刷一把（aincrad 开局在安全营地，通常为空）
     new_state.active_spawns = _roll_spawns(new_world.get_room(new_state.position))
+    new_state.cell = _entry_cell(new_world.get_room(new_state.position))  # 二维棋盘落点
     _autosave()  # 新开局立即落盘，覆盖旧 autosave（防进程重启误恢复到上一局）
 
     scene = _room_snapshot(new_world, new_state)
@@ -1728,6 +1983,13 @@ def call_affordance(object_id: str, verb: str) -> dict:
         return {"ok": False, "error": f"{object_id} 仍处于隐藏状态，当前无法交互"}
     if obj.hidden_when_flag and state.flags.get(obj.hidden_when_flag):
         return {"ok": False, "error": f"{object_id} 已消解，不在当前场景"}
+
+    # 二维棋盘：交互场景物前先确保走到跟前（背包里的不门控）。过不去则拒；无 grid=不门控。
+    grid = _room_grid(room)
+    if grid and object_id in (room.objects if room else []):
+        move_info = _approach_cell(state, room, grid.objects.get(object_id))
+        if not move_info["ok"]:
+            return move_info
 
     aff = world.get_affordance(object_id, verb)
     if not aff:
@@ -3365,6 +3627,7 @@ def _respawn_player(reason: str = "") -> dict:
     if not SESSION.world.get_room(respawn_room):
         respawn_room = "camp"
     state.position = respawn_room
+    state.cell = _entry_cell(SESSION.world.get_room(respawn_room))  # 二维棋盘落点
     SESSION.encounter = None                     # 清战斗
     state.active_spawns = []                      # 回到安全点，清在场刷怪
     _autosave()
@@ -4097,6 +4360,7 @@ def move(direction: str) -> dict:
     # TTL 过期仍由 _advance_turn 处理（时间到了才消失，不是一换房就没）。
     old_room_id = state.position
     state.position = new_room_id
+    state.cell = _entry_cell(new_room)        # 二维棋盘：进新房落到 entry（无 grid=忽略）
     expired = _advance_turn(state)
 
     # ── 刷怪：进入新房间随机刷一把（刷怪场才刷；其余房间清空在场敌人）──
@@ -4132,6 +4396,48 @@ def move(direction: str) -> dict:
     if reactive_fired:
         result["reactive_fired"] = reactive_fired
     return result
+
+
+@mcp.tool()
+def approach(target: str) -> dict:
+    """在当前房间的二维棋盘上走到某样东西【跟前】（引擎寻路、自动算路挪动你的位置）。
+    玩家说"走向吧台 / 靠近那桌人 / 到门口去 / 退到墙角"时调它，返回走了几步 + 更新后的场景。
+
+    交互类工具（warm_object/call_affordance/take_item）够不着目标时会【自动先走过去】，
+    所以 approach 主要用于"我只是想换个位置站"——看风景、找掩护、拉开距离、靠近某人说话等。
+    引擎只认棋盘坐标并对你隐藏它；你和玩家都只看方位+距离（get_scene 的 scene.grid）。
+
+    Args:
+        target: 要靠近的东西的名字——成型物 / 冷物体 / 地标 / 出口（方向或目标房名，支持部分匹配）。
+                取自 get_scene 的 scene.grid.around[].name、at_hand[].name，或 objects/ambient 的名字。
+    """
+    if err := _require_started():
+        return err
+    if SESSION.in_combat:
+        return {"ok": False, "error": "战斗中走位请用 declare_intent(actor, 'move', ...) 改列阵位，探索的 approach 此时不用。"}
+    world, state = SESSION.world, SESSION.state
+    room = world.get_room(state.position)
+    grid = _room_grid(room)
+    if not grid:
+        return {"ok": False, "error": "这间房没有棋盘布局（满屋皆在手边）——直接交互即可，无需走位。"}
+    hit = _resolve_grid_target(world, state, room, target)
+    if not hit:
+        return {"ok": False,
+                "error": f"棋盘上找不到「{target}」。看 get_scene 的 scene.grid（at_hand 手边 / around 四周）里的名字。"}
+    kind, ref, cell, standable_self, display = hit
+    move_info = _approach_cell(state, room, cell, standable_self=standable_self)
+    if not move_info["ok"]:
+        return move_info
+    _autosave()
+    return {
+        "ok": True,
+        "target": display,
+        "moved": move_info["moved"],
+        "steps": move_info.get("steps", 0),
+        "note": (f"你穿过去，走到{display}跟前（{move_info['steps']} 步）。" if move_info["moved"]
+                 else f"{display}本就在你手边，没挪窝。"),
+        "scene": _room_snapshot(world, state),
+    }
 
 
 def _write_room_snapshot(world: GameWorld, state: GameState, room) -> None:
@@ -4360,11 +4666,17 @@ def take_item(object_id: str) -> dict:
     if state.has_item(object_id):
         return {"ok": False, "error": "已在背包中"}
 
+    # 二维棋盘：够不着就先走过去（引擎寻路）；过不去则拒。无 grid=不门控。
+    grid = _room_grid(room)
+    move_info = _approach_cell(state, room, grid.objects.get(object_id) if grid else None)
+    if not move_info["ok"]:
+        return move_info
+
     state.add_item(InventoryItem.from_object(obj))
     room.objects = [oid for oid in room.objects if oid != object_id]
     expired = _advance_turn(state)
 
-    return {
+    result = {
         "ok": True,
         "picked_up": object_id,
         "name": obj.name,
@@ -4373,6 +4685,9 @@ def take_item(object_id: str) -> dict:
         "expired_items": expired,
         "turn": state.turn,
     }
+    if move_info.get("moved"):
+        result["approached"] = move_info
+    return result
 
 
 @mcp.tool()
@@ -4501,6 +4816,12 @@ def warm_object(name: str, action: str = "grab") -> dict:
         return {"ok": False,
                 "error": f"此处没有「{name}」这样的环境物。就地可用：{list(props.keys())}"}
     spec = AMBIENT_KINDS.get(kind, AMBIENT_KINDS["misc"])
+    # 二维棋盘：够不着就先走过去（引擎寻路，更新 state.cell）；过不去则拒。无 grid=不门控。
+    grid = _room_grid(room)
+    move_info = _approach_cell(state, room, grid.ambient.get(name) if grid else None)
+    if not move_info["ok"]:
+        return move_info
+    appr = {"approached": move_info} if move_info.get("moved") else {}
     if action == "smash":
         smash = spec.get("smash")
         if smash:                      # 砸开有可用碎块（如家具→木料棒）→ 确定性入背包
@@ -4509,8 +4830,9 @@ def warm_object(name: str, action: str = "grab") -> dict:
             item = {"id": f"imp_smash_{state.turn}_{abs(hash(name)) % 100000}", "name": nm, **fields}
             result = add_improvised([item])
             result["smashed"] = name
+            result.update(appr)
             return result
-        return {"ok": True, "smashed": name, "kind": kind,    # 砸了但无可用碎块
+        return {"ok": True, "smashed": name, "kind": kind, **appr,   # 砸了但无可用碎块
                 "note": f"{name}（{spec['label']}）被就地砸毁/破坏——叙事处理即可（砸开无可用碎块）；"
                         "要造成伤害/点燃走 deal_damage、要某个后果走 gm_set_flag。"}
     if action != "grab":
@@ -4523,6 +4845,7 @@ def warm_object(name: str, action: str = "grab") -> dict:
     item = {"id": f"imp_amb_{state.turn}_{abs(hash(name)) % 100000}", "name": name, **grab}
     result = add_improvised([item])
     result["warmed"] = {"name": name, "kind": kind, "label": spec["label"]}
+    result.update(appr)
     return result
 
 
@@ -5090,6 +5413,7 @@ def _serialize_state(state: GameState, world_name: str) -> dict:
         "equipped": state.equipped,
         "pending_contract": state.pending_contract,   # §12：未消费的危机合约
         "active_spawns": state.active_spawns,          # 刷怪：当前在场敌人
+        "cell": list(state.cell),                      # 二维棋盘：玩家在房间棋盘上的格
         "player_attrs": state.player_attrs,
         "world_attrs": state.world_attrs,
     }
@@ -5220,6 +5544,7 @@ def _session_from_data(data: dict) -> Optional[Session]:
         equipped=data.get("equipped", {}),
         pending_contract=data.get("pending_contract"),   # §12
         active_spawns=data.get("active_spawns", []),      # 刷怪：当前在场敌人
+        cell=tuple(data.get("cell", (0, 0))),             # 二维棋盘格
         player_attrs=_clean_custom_attributes(data.get("player_attrs", {})),
         world_attrs=_clean_custom_attributes(data.get("world_attrs", {})),
     )

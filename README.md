@@ -19,6 +19,7 @@
 - **战斗系统**：回合制 Encounter 状态机，敌人原型表 + 行为画像，命中/伤害/抗性/buff/死亡全走统一管线。打怪给经验、升级长血。
 - **万物皆可破坏**（BG3 式）：场景里的高草丛、宝箱、陷阱地砖天生有 hp/抗性（默认冻结、零 token 负担），玩家做出破坏意图时解冻结算，`on_destroyed` 可揭示隐藏物、触发剧情。
 - **冷物体（环境陈设）**：房间用一行 `ambient=["酒瓶:bottle","长桌:furniture",…]` 廉价铺满场景密度——不建成型物件、零成本；玩家碰它时 `warm_object` 按类别**确定性解冻**（瓶=1d3斩、棍棒=1d4钝…）成即兴物。就地取材破局（抓酒瓶砸过去）到处可行，不止作者预建处。
+- **二维棋盘（房间空间感）**：房间可选挂一块 `RoomGrid`——物体/陈设/出口钉在格子上，玩家是棋盘上一枚 token。**引擎独占坐标与寻路（BFS），对外只吐方位（8 向）+ 距离（步/远近词）**，省 token、防 GM 编坐标。`get_scene` 把"手边可交互"与"四周得走过去"分开，叙事自然有了前景/背景纵深；`approach(target)` 走位、够不着的东西交互时引擎自动寻路过去。没挂棋盘的房间隐式"满屋皆在手边"（向后兼容）。战斗仍走 rank/reach（棋盘暂管探索）。
 - **技能树**：被动常驻 / 主动施放（消耗 + 冷却）/ 反应触发（被偷袭前自动加感知），XP 成长自动升 rank。
 - **战术战斗（可选）**：硬仗可开战术模式——列阵区位（rank）、武器触及（reach，近战须顶前排/远程点后排）、行动经济（每回合 1 大动 + 1 小动），让近战/远程/走位 build 真正分化，而非脸贴脸互砍。
 - **危机合约**：玩家自选挑战词条强化敌人（敌伤/敌血/敌甲/敌速），引擎吃得住，胜利时经验金币按难度**确定性**放大——难度由玩家作者、强度靠 build 挣、奖励算得清，构成单层的重打循环。
@@ -28,7 +29,7 @@
 - **软重生**：死亡不是 game over——回满血、掉一半金币、被烙印拽回营地水晶。战斗倒下自动触发，探索/叙事死亡 GM 裁定。鼓励 6 血绝境里大胆试错。
 - **示例世界「苍穹回廊」**：日式异世界逐层攻略——剑技 / 炎霜雷影属性克制 / 等级成长 / 逐层 Boss 攻略。**冷开局是一场"破局"**：玩家落在初始小镇，6 点血、一双空拳（1d1）、0 金、0 人脉，连城外的杀人兔都打不死——第一件事是靠脑子和胆子挣出活路（酒馆挨打换补偿 / 掰枯树当棍 / 闯林捡手斧 / 或任何即兴解法）。
 
-当前规模：45 个引擎工具，1 个世界（破局开场 + 第一层），340 个回归测试。
+当前规模：46 个引擎工具，1 个世界（破局开场 + 第一层），364 个回归测试。
 
 ---
 
@@ -116,20 +117,20 @@ GM 会带你进入苍穹回廊的营地——6 点血、空着两手、一个铜
 ## 架构一览
 
 ```
-mcp_server.py          # 游戏引擎 + 45 个工具（核心）
+mcp_server.py          # 游戏引擎 + 46 个工具（核心）
 core/types.py          # 数据模型：Modifier/Buff/Skill/RuleBook/Combatant/GameObject…
 runtime/game_world.py  # 世界容器：房间/物体/敌人/技能/规则书注册表
 content/aincrad/       # 示例世界「苍穹回廊」（拆包：canon/enemies/skills/rooms/objects/state）
 standalone/            # 独立运行层：config / tools(工具桥) / agent(loop) / prompt / tui / cli
 .claude/skills/play/   # GM skill（导演 prompt，与 .agents/ 同步）
 .agents/skills/play/
-tests/                 # 340 个回归测试
+tests/                 # 364 个回归测试
 ```
 
 **分层与依赖**：
 - 引擎层（`mcp_server` + `core` + `runtime`）确定性、可计算，是唯一的状态权威。
 - content 层（`content/*.py`）是纯数据。**加新世界 = 写一份 `content/<world>.py`，引擎不动。**
-- 独立层（`standalone/`）只是引擎之上的一层"自带 GM"——工具桥从引擎自己的注册表自动暴露 45 个工具，进程内直调（不走 MCP 协议）。
+- 独立层（`standalone/`）只是引擎之上的一层"自带 GM"——工具桥从引擎自己的注册表自动暴露 46 个工具，进程内直调（不走 MCP 协议）。
 - 单向依赖：Modifier 不知道 Skill/Buff 存在；引擎不知道 content 长什么样；content 不知道谁在当 GM。
 
 ---
@@ -147,7 +148,7 @@ python -m pytest tests/ -q
 
 content 是纯数据。照着 `content/aincrad/` 写一份新世界——可以是单文件 `content/<world>.py`，也可以像 aincrad 那样拆成包（`canon` 世界观+规则书 / `enemies` / `skills` / `rooms` / `objects` / `state` 初始态，`__init__.register()` 组装）。引擎只认 `register(world)` 这一个入口，单文件还是拆包对它透明。写好后在 `mcp_server.py` 的 `WORLDS` 字典里注册即可。
 
-- **零件**：房间 `Room`、物体 `GameObject`、敌人 `EnemyTemplate`、技能 `Skill`、任务 `QuestEntry`，可选 `RuleBook`（自定义属性表/装备槽/徒手伤害，不写就用默认）。物体的 `on_destroyed`/`on_hit`、affordance 的 `effect`、武器的 `scaling` 都复用同一套数据 DSL，无需改引擎。
+- **零件**：房间 `Room`、物体 `GameObject`、敌人 `EnemyTemplate`、技能 `Skill`、任务 `QuestEntry`，可选 `RuleBook`（自定义属性表/装备槽/徒手伤害，不写就用默认）、可选 `RoomGrid`（给房间挂二维棋盘加空间感，物体/陈设/出口钉到格上，不写就"满屋皆在手边"）。物体的 `on_destroyed`/`on_hit`、affordance 的 `effect`、武器的 `scaling` 都复用同一套数据 DSL，无需改引擎。
 - **改完先校验**：`python -m standalone.cli --check` 会跑 `GameWorld.validate()`，把"出口/物体/敌人/技能等字符串 id 拼错"在作者期就报出来（人话报错），不必等玩到那里才崩。
 
 ---

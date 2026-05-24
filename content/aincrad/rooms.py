@@ -1,5 +1,5 @@
 """苍穹回廊：房间。"""
-from core.types import Room
+from core.types import Room, RoomGrid
 
 
 def add_all(world):
@@ -50,6 +50,32 @@ def add_all(world):
         tags=["safe_zone", "social", "floor_1"],
         ambient=["桌上的酒瓶:bottle", "长条木桌:furniture", "翻倒的木凳:furniture",
                  "壁炉边的拨火棍:club", "吊着的油灯:misc", "墙角的空酒坛:bottle"],
+        # 二维棋盘（示范房）：5×5。x 东+/y 南+（行号自上而下，顶=北=后墙）。布局：
+        #   y\x  0      1       2       3        4
+        #   0    .      壁炉    油灯    老板     .
+        #   1    .      拨火棍  .       吧台      .
+        #   2    门口   .       争吵    .        .
+        #   3    .      .       酒瓶    .        .
+        #   4    .      木凳    木桌    .        空酒坛
+        # 进门(西墙门口)→ 吧台/老板在东北、争吵在正中、壁炉在西北——拿东西/搭话都要走过去。
+        grid=RoomGrid(
+            width=5, height=5,
+            entry=(0, 2),                     # 从营地推门进来，站在西侧门口
+            objects={
+                "tavern_keeper": (3, 0),      # 吧台后的老板（东北）
+                "tavern_brawl": (2, 2),       # 屋子正中那场一触即发的争吵
+            },
+            ambient={
+                "吊着的油灯": (2, 0),         # 后墙正中吊着
+                "壁炉边的拨火棍": (1, 1),     # 西北壁炉旁
+                "桌上的酒瓶": (2, 3),
+                "长条木桌": (2, 4),
+                "翻倒的木凳": (1, 4),
+                "墙角的空酒坛": (4, 4),       # 东南墙角
+            },
+            exits={"west": (0, 2)},           # 通营地的门在西墙
+            landmarks={"吧台": (3, 1), "壁炉": (1, 0)},
+        ),
     ))
 
     world.add_room(Room(

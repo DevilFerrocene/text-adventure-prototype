@@ -424,6 +424,8 @@ class GameState:
     # 进入"spawn_ground"房间时由引擎随机刷一把写进来；离开/战斗结束清空。
     # get_scene/request_combat 看的是这个，而不是 room.enemies（那只是刷怪池）。
     active_spawns: List[str] = field(default_factory=list)
+    # 二维棋盘：玩家在当前房间棋盘上的格子 (x,y)。进房时落到 grid.entry；无 grid 的房间忽略。
+    cell: Tuple[int, int] = (0, 0)
 
     def has_item(self, item_id: str) -> bool:
         return any(i.id == item_id for i in self.inventory)
@@ -460,6 +462,33 @@ class GameState:
 
 
 @dataclass
+class RoomGrid:
+    """房间的二维棋盘（战棋/早期 RPG 式）。给探索加空间感：物体/陈设/出口都钉在格子上，
+    玩家是棋盘上的一枚 token。**引擎独占坐标与寻路**——上层（GM）从不见原始 (x,y)，
+    只收到引擎算好的【方位 + 距离】（见 mcp_server 的 _spatial_overview），省 token、防幻觉。
+
+    坐标约定：x=列（东+/西-），y=行（南+/北-，即行号自上而下，顶=北）。
+    没有 grid 的房间 → 隐式"满屋皆在手边"（旧行为，零迁移）。
+
+    width/height — 棋盘尺寸（可大可小，按房间实际空间感来）
+    entry        — 进门默认落点（move 进房时玩家落在这儿）
+    blocked      — 不可站立/穿越的格（墙、深坑等障碍）
+    objects      — {object_id: (x,y)}  把房间已有成型物钉到格上（须也在 room.objects 里）
+    ambient      — {陈设名: (x,y)}     把冷物体钉到格上（名取自 room.ambient 的"名:类"前段）
+    exits        — {方向: (x,y)}       该出口的"门"在哪格（玩家须走到门口才好出去）
+    landmarks    — {地标名: (x,y)}     无实体的方位锚/可驻足点（窗边、火塘旁…），纯为方位/走位
+    """
+    width: int
+    height: int
+    entry: Tuple[int, int] = (0, 0)
+    blocked: List[Tuple[int, int]] = field(default_factory=list)
+    objects: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    ambient: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    exits: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    landmarks: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+
+
+@dataclass
 class Room:
     """A room/location in the game world."""
     id: str
@@ -479,6 +508,9 @@ class Room:
     # 不建成型 GameObject——零 affordance/hp 成本，玩家碰它时经 warm_object 按类别确定性解冻
     # (碎瓶=1d3斩、棍棒=1d4钝…)。一类陈设、不耗尽。成型物件仍留给值得设计的东西。
     ambient: List[str] = field(default_factory=list)
+    # 二维棋盘（可选）：给房间加空间感，物体/陈设/出口钉在格上，玩家走位才够得着。
+    # 不写 = 隐式单格"满屋皆在手边"（旧行为，向后兼容）。见 RoomGrid。
+    grid: Optional["RoomGrid"] = None
 
 
 @dataclass
